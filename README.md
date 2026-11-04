@@ -27,6 +27,11 @@ Run from Claude with the `/draft` skill (`skill/SKILL.md`), or by hand with `dra
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.
 
+The server stops itself 10 minutes after the last open page goes away, and an open page then
+says so. Run `draft show` to start it again. The draft itself stays until it's accepted or
+dropped. It costs only disk: a worktree without a build folder. `draft list` shows each draft's
+age and whether its server is running.
+
 ## Scope: what the diagram includes
 
 - **What Claude read in the session.** `ReadLog` (`reads.py`) reads the session transcript

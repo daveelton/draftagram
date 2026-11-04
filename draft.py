@@ -32,7 +32,10 @@ from page import DraftPage      # noqa: E402
 from draft_tree import Draft      # noqa: E402
 from view import DraftView, UnitCache   # noqa: E402
 
-IDLE_EXIT_SECONDS = 4 * 3600
+# An open page polls every 2 seconds (about once a minute when Chrome throttles a background
+# tab), so this long without a request means no page is open: the server exits. The draft
+# stays; `draft show` starts the server again.
+IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 10 * 60))
 
 
 class DraftServer:
@@ -128,7 +131,7 @@ class DraftServer:
                 self._send(200, "ok")
 
         httpd = HTTPServer(("127.0.0.1", 0), Handler)
-        httpd.timeout = 30
+        httpd.timeout = 15
         json.dump({"pid": os.getpid(), "port": httpd.server_address[1]}, open(self.info_path, "w"))
         signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
         while server.p.exists() and time.time() - self.last_seen < IDLE_EXIT_SECONDS:
@@ -229,10 +232,16 @@ class DraftCli:
         print(f"Dropped '{p.name}'.")
 
     def cmd_list(self, a):
-        for p in Draft.all(self.root):
+        drafts = Draft.all(self.root)
+        for p in drafts:
             m = p.meta
             live = DraftServer.running(p)
-            print(f"{p.name}  {m.get('summary', '')}" + (f"  [{live['port']}]" if live else ""))
+            days = (time.time() - m.get("started", time.time())) / 86400
+            age = f"{days:.0f} days old" if days >= 1 else "started today"
+            state = f"page server on port {live['port']}" if live else "server stopped"
+            print(f"{p.name}  {m.get('summary', '')}  ({age}, {state})")
+        if not drafts:
+            print("no drafts")
 
 
 if __name__ == "__main__":

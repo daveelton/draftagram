@@ -374,8 +374,22 @@ Viz.instance().then(viz => {{
   zoom(0);
 }}).catch(err => document.getElementById('svg').textContent = 'Graphviz failed: ' + err);
 // Live: re-draw when the draft, your diff, the scope or Claude's reading changes.
+// The server stops 10 minutes after the last open page goes away; say so, and how to restart.
+function stopped(text) {{
+  let b = document.getElementById('stopped');
+  if (!b) {{ b = document.createElement('div'); b.id = 'stopped'; b.className = 'warn'; document.querySelector('header').appendChild(b); }}
+  b.textContent = text;
+}}
 if (location.protocol.startsWith('http')) setInterval(async () => {{
-  try {{ const s = await (await fetch('/stamp')).text(); if (s && s !== STAMP) location.reload(); }} catch (e) {{}}
+  try {{
+    const r = await fetch('/stamp');
+    if (r.status === 410) return stopped('This draft was accepted or dropped.');
+    const s = await r.text();
+    if (s && s !== STAMP) location.reload();
+    const b = document.getElementById('stopped'); if (b) b.remove();
+  }} catch (e) {{
+    stopped('The page server has stopped. Run `draft show {name}` in the project to start it again.');
+  }}
 }}, 2000);
 </script></body></html>
 """

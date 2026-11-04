@@ -43,7 +43,9 @@ and its docs are in `~/mac-setup/draft/` (README.md).
      commit unless asked.
    - `draft drop <name>` throws the draft away.
 
-`draft list` shows open drafts. `draft render <name> --out FILE` writes the page once,
+`draft list` shows open drafts, their age, and whether the page server is running. The server
+stops 10 minutes after the last open page goes away. When the user returns to a draft, run
+`draft show <name>` to start it again. `draft render <name> --out FILE` writes the page once,
 without the live server.
 
 ## Notes
