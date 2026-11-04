@@ -97,6 +97,16 @@ Parsing details that matter:
 - `accept` uses `git apply`. If the checkout has changed in the same lines since the draft
   started, accept refuses and says why. Rebase by dropping and starting again.
 
+## Open: leftover drafts
+
+A draft's server stops by itself, but its worktree and `draft/<name>` branch stay until
+someone accepts or drops it, so forgotten drafts pile up. The likely fix is a `SessionStart`
+hook that runs `draft list` for the session's project. Text a SessionStart hook prints goes
+into Claude's context, so Claude would open with "this project has 2 drafts, the oldest 9 days
+old: keep or drop?" That keeps clear-up a question for the user, never an automatic delete.
+To be settled after some real use: the age that counts as left over, and whether drafts from
+the session being resumed should be mentioned.
+
 ## Checking it works
 
 In a CMake project, after reading a class in a Claude session:
