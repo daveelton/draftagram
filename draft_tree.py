@@ -1,0 +1,215 @@
+"""One draft: Claude's change, made in a scratch git worktree so the user's checkout is
+untouched until they accept it.
+
+The worktree's branch has one commit on top of HEAD, the *snapshot*: the user's uncommitted
+changes (tracked and untracked) when the draft started. Claude edits the worktree after
+that, so three states can be compared:
+
+    HEAD  ->  working tree (the user's current diff)  ->  draft (snapshot -> worktree)
+"""
+import json
+import os
+import re
+import shutil
+import subprocess
+import time
+
+SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+
+
+def git(cwd, *args, check=True, input=None):
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, input=input)
+    if check and r.returncode != 0:
+        raise SystemExit(f"git {' '.join(args)} failed:\n{r.stderr.strip()}")
+    return r.stdout
+
+
+class Draft:
+    def __init__(self, root, name):
+        if not SLUG.match(name):
+            raise SystemExit(f"draft name '{name}': use lower-case letters, digits and dashes")
+        self.root = root
+        self.name = name
+        self.dir = os.path.join(root, "temp", "draft", name)
+        self.tree = os.path.join(self.dir, "tree")
+        self.branch = f"draft/{name}"
+        self.meta_path = os.path.join(self.dir, "meta.json")
+        self.scope_path = os.path.join(self.dir, "scope.json")
+
+    # ---------- finding drafts ----------
+
+    @staticmethod
+    def project_root(path="."):
+        r = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=path,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("not inside a git repository")
+        top = r.stdout.strip()
+        # Inside a draft's worktree, the project is the checkout that holds it.
+        m = re.match(r"^(.*)/temp/draft/[^/]+/tree$", top)
+        return m.group(1) if m else top
+
+    @classmethod
+    def all(cls, root):
+        d = os.path.join(root, "temp", "draft")
+        return [cls(root, n) for n in sorted(os.listdir(d))
+                if os.path.exists(os.path.join(d, n, "meta.json"))] if os.path.isdir(d) else []
+
+    @classmethod
+    def find(cls, root, name=None):
+        if name:
+            p = cls(root, name)
+            if not p.exists():
+                raise SystemExit(f"no draft '{name}' (draft list)")
+            return p
+        props = cls.all(root)
+        if len(props) != 1:
+            raise SystemExit("name the draft: " + (", ".join(p.name for p in props) or "none yet"))
+        return props[0]
+
+    def exists(self):
+        return os.path.exists(self.meta_path)
+
+    @property
+    def meta(self):
+        return json.load(open(self.meta_path))
+
+    # ---------- lifecycle ----------
+
+    def start(self, session_id, summary=""):
+        """Make the worktree at HEAD plus the user's uncommitted changes."""
+        if self.exists():
+            raise SystemExit(f"draft '{self.name}' already exists: {self.tree}")
+        self._ensure_temp_ignored()
+        head = git(self.root, "rev-parse", "HEAD").strip()
+        os.makedirs(self.dir, exist_ok=True)
+        git(self.root, "worktree", "add", "-q", "-b", self.branch, self.tree, head)
+        patch = git(self.root, "diff", "HEAD", "--binary")
+        if patch.strip():
+            git(self.tree, "apply", "--whitespace=nowarn", input=patch)
+        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if f:
+                dst = os.path.join(self.tree, f)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(os.path.join(self.root, f), dst)
+        git(self.tree, "add", "-A")
+        git(self.tree, "-c", "user.name=draft", "-c", "user.email=draft@localhost",
+            "commit", "-q", "--allow-empty", "--no-verify", "-m",
+            "Snapshot of the working tree the draft starts from")
+        snapshot = git(self.tree, "rev-parse", "HEAD").strip()
+        json.dump({"name": self.name, "head": head, "snapshot": snapshot,
+                   "session": session_id, "summary": summary, "started": time.time()},
+                  open(self.meta_path, "w"), indent=2)
+        json.dump({"expanded": []}, open(self.scope_path, "w"))
+
+    def accept(self):
+        """Apply the draft to the user's checkout as uncommitted changes, then drop it."""
+        patch = self.draft_patch(binary=True)
+        if not patch.strip():
+            raise SystemExit("the draft has no changes")
+        r = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn"], cwd=self.root,
+                           input=patch, capture_output=True, text=True)
+        if r.returncode != 0:
+            raise SystemExit("the checkout has changed under the draft; it doesn't apply:\n"
+                             + r.stderr.strip())
+        git(self.root, "apply", "--whitespace=nowarn", input=patch)
+        files = git(self.tree, "diff", "--cached", "--name-only", self.meta["snapshot"]).split()
+        self.drop()
+        return files
+
+    def drop(self):
+        git(self.root, "worktree", "remove", "--force", self.tree, check=False)
+        git(self.root, "branch", "-D", self.branch, check=False)
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+    def _ensure_temp_ignored(self):
+        r = subprocess.run(["git", "check-ignore", "-q", "temp/draft"], cwd=self.root)
+        if r.returncode != 0:
+            with open(os.path.join(self.root, ".gitignore"), "a") as f:
+                f.write("\ntemp/\n")
+
+    # ---------- the three states ----------
+
+    def draft_patch(self, binary=False, context=3):
+        git(self.tree, "add", "-A")
+        args = ["diff", "--cached", f"-U{context}", self.meta["snapshot"]]
+        return git(self.tree, *(args + ["--binary"] if binary else args))
+
+    def current_patch(self, context=3):
+        """The user's uncommitted diff, untracked files included as additions."""
+        out = git(self.root, "diff", f"-U{context}", "HEAD")
+        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if f and not f.startswith("temp/"):
+                r = subprocess.run(["git", "diff", "--no-index", f"-U{context}", "/dev/null", f],
+                                   cwd=self.root, capture_output=True, text=True)
+                out += r.stdout
+        return out
+
+    def state_files(self):
+        """Overrides for each state, as {path in the checkout: text, or None if the file
+        doesn't exist in that state}. Paths are always the checkout's, so all states parse
+        with the same compile flags."""
+        head, snap = self.meta["head"], self.meta["snapshot"]
+
+        def changed(cwd, *rev):
+            out = git(cwd, "diff", "--name-status", "--no-renames", *rev)
+            return [l.split("\t", 1) for l in out.splitlines() if "\t" in l]
+
+        def show(rev, f):
+            r = subprocess.run(["git", "show", f"{rev}:{f}"], cwd=self.root, capture_output=True,
+                               text=True, errors="replace")
+            return r.stdout if r.returncode == 0 else None
+
+        head_state = {}
+        for status, f in changed(self.root, "HEAD"):
+            head_state[os.path.join(self.root, f)] = None if status == "A" else show(head, f)
+        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if f:
+                head_state[os.path.join(self.root, f)] = None
+
+        git(self.tree, "add", "-A")
+        draft_state = {}
+        for status, f in changed(self.tree, "--cached", snap):
+            p = os.path.join(self.tree, f)
+            draft_state[os.path.join(self.root, f)] = \
+                None if status == "D" else open(p, errors="replace").read()
+        return head_state, draft_state
+
+    def to_checkout_path(self, path):
+        """A worktree path as the same file in the checkout."""
+        prefix = self.tree + os.sep
+        return os.path.join(self.root, path[len(prefix):]) if path.startswith(prefix) else path
+
+    # ---------- what the user has added to the diagram ----------
+    # scope.json: {"expanded": [{"name", "file"}], "full": [class names drawn with every member]}
+
+    def _scope(self):
+        try:
+            return json.load(open(self.scope_path))
+        except (OSError, ValueError):
+            return {}
+
+    def _save_scope(self, scope):
+        json.dump(scope, open(self.scope_path, "w"), indent=2)
+
+    @property
+    def expanded(self):
+        return self._scope().get("expanded", [])
+
+    @property
+    def full(self):
+        return set(self._scope().get("full", []))
+
+    def expand(self, class_name, file):
+        scope = self._scope()
+        names = scope.setdefault("expanded", [])
+        if all(e["name"] != class_name for e in names):
+            names.append({"name": class_name, "file": file})
+            self._save_scope(scope)
+
+    def show_all_members(self, class_name):
+        scope = self._scope()
+        full = scope.setdefault("full", [])
+        if class_name not in full:
+            full.append(class_name)
+            self._save_scope(scope)
