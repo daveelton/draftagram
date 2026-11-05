@@ -310,10 +310,14 @@ header ul {{ margin:2px 0; padding-left:18px; font-family:Menlo, monospace; font
 .warn {{ background:{p.WARN_BG}; border:1px solid {p.UNREAD}; padding:4px 8px; margin-top:4px; }}
 .off {{ margin-top:4px; }} .chip {{ border:1px dashed {p.GHOST_LINE}; padding:0 5px; margin-right:4px; color:{p.DIM}; text-decoration:none; }}
 main {{ flex:1; display:flex; min-height:0; }}
-#diagram {{ flex:1.2; overflow:auto; border-right:1px solid {p.BORDER}; position:relative; }}
+#diagram {{ flex:1.2; overflow:auto; border-right:1px solid {p.BORDER}; position:relative; cursor:grab; }}
+#diagram.dragging {{ cursor:grabbing; user-select:none; }}
+#diagram.full {{ position:fixed; inset:0; z-index:5; background:{p.BG}; border:none; }}
 #diagram svg a {{ cursor:pointer; }}
 #diagram svg text[font-family="Courier,monospace"] {{ font-family:Menlo, monospace; }}   /* same width as Courier, which Graphviz measures */
-#zoom {{ position:sticky; top:6px; left:6px; z-index:2; }}
+#zoom {{ position:sticky; top:6px; left:6px; z-index:2; display:inline-flex; gap:2px; align-items:center; cursor:default; }}
+#zoom .hint {{ color:{p.FAINT}; font-size:11px; margin-left:8px; }}
+#zoomed {{ min-width:40px; text-align:center; font-size:11px; color:{p.DIM}; }}
 button {{ font-size:12px; color:{p.TEXT}; background:{p.RAISED}; border:1px solid {p.BORDER}; }}
 #side {{ flex:1; display:flex; flex-direction:column; min-width:0; }}
 .tabs {{ background:{p.PANEL}; }}
@@ -337,7 +341,7 @@ pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow
  {warn}{offstage}{diags}
 </header>
 <main>
- <div id="diagram"><div id="zoom"><button onclick="zoom(1.25)">+</button><button onclick="zoom(0.8)">−</button><button onclick="zoom(0)">fit</button></div><div id="svg">Drawing…</div></div>
+ <div id="diagram"><div id="zoom"><button onclick="zoomBy(1 / ZOOM_STEP)" title="Zoom out">−</button><span id="zoomed"></span><button onclick="zoomBy(ZOOM_STEP)" title="Zoom in">+</button><button onclick="zoomFit()">fit</button><button onclick="zoomTo(1)">100%</button><button id="full" onclick="setFull(!diagram.classList.contains('full'))">full screen</button><span class="hint">pinch or ⌘-scroll to zoom, drag to move</span></div><div id="svg">Drawing…</div></div>
  <div id="side">
   <div class="tabs"><button data-t="prop" class="on">The draft</button><button data-t="cur">Your uncommitted change</button><button data-t="code">Code</button></div>
   <div id="prop" class="panel on">{prop_diff}</div>
@@ -350,18 +354,82 @@ pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow
 const DOT = {dot};
 const SEL = {data};
 const STAMP = "{stamp}";
-let scale = 1, svg = null;
+let scale = 1, svg = null, dragged = false;
 function tab(t) {{
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === t));
 }}
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => tab(b.dataset.t));
-function zoom(f) {{
+// The diagram zooms and pans inside its own panel. The SVG's size is set from the zoom (not
+// a CSS transform), so the panel's scrollbars and trackpad scrolling keep working.
+const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_STEP = 1.25;
+const START_MIN = 0.5;     // fitting the width never starts smaller than this, so text stays readable
+const DRAG_PX = 4;         // a press that moves further than this is a drag, not a click
+const diagram = document.getElementById('diagram');
+function zoomTo(s, x = diagram.clientWidth / 2, y = diagram.clientHeight / 2) {{
   if (!svg) return;
-  const box = document.getElementById('diagram');
-  scale = f === 0 ? Math.min(1, (box.clientWidth - 10) / svg.viewBox.baseVal.width) : scale * f;
+  s = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, s));
+  const px = (diagram.scrollLeft + x) / scale, py = (diagram.scrollTop + y) / scale;   // keep this point under (x, y)
+  scale = s;
   svg.setAttribute('width', svg.viewBox.baseVal.width * scale);
   svg.setAttribute('height', svg.viewBox.baseVal.height * scale);
+  diagram.scrollLeft = px * scale - x;
+  diagram.scrollTop = py * scale - y;
+  document.getElementById('zoomed').textContent = Math.round(scale * 100) + '%';
+}}
+function zoomBy(f) {{ zoomTo(scale * f); }}
+function zoomFit() {{
+  const vb = svg.viewBox.baseVal;
+  zoomTo(Math.min(1, (diagram.clientWidth - 10) / vb.width, (diagram.clientHeight - 40) / vb.height));
+  diagram.scrollTo(0, 0);
+}}
+function setFull(on) {{
+  diagram.classList.toggle('full', on);
+  document.getElementById('full').textContent = on ? 'close' : 'full screen';
+  zoomTo(scale);
+}}
+document.addEventListener('keydown', e => {{ if (e.key === 'Escape' && diagram.classList.contains('full')) setFull(false); }});
+diagram.addEventListener('wheel', e => {{
+  if (!e.ctrlKey && !e.metaKey) return;      // a trackpad pinch arrives as a wheel event with ctrlKey set
+  e.preventDefault();
+  const r = diagram.getBoundingClientRect();
+  zoomTo(scale * Math.exp(-e.deltaY * 0.01), e.clientX - r.left, e.clientY - r.top);
+}}, {{passive:false}});
+diagram.addEventListener('pointerdown', e => {{
+  if (e.button !== 0 || e.target.closest('#zoom')) return;
+  const x0 = e.clientX, y0 = e.clientY, left = diagram.scrollLeft, top = diagram.scrollTop;
+  dragged = false;
+  const move = m => {{
+    if (Math.abs(m.clientX - x0) + Math.abs(m.clientY - y0) > DRAG_PX) {{ dragged = true; diagram.classList.add('dragging'); }}
+    if (dragged) {{ diagram.scrollLeft = left - (m.clientX - x0); diagram.scrollTop = top - (m.clientY - y0); }}
+  }};
+  const up = () => {{
+    diagram.classList.remove('dragging');
+    removeEventListener('pointermove', move);
+    removeEventListener('pointerup', up);
+  }};
+  addEventListener('pointermove', move);
+  addEventListener('pointerup', up);
+}});
+// The page reloads whenever the draft changes; keep the zoom and position across reloads.
+addEventListener('beforeunload', () => {{
+  try {{
+    sessionStorage.setItem('view', JSON.stringify({{scale, left: diagram.scrollLeft, top: diagram.scrollTop,
+                                                    full: diagram.classList.contains('full')}}));
+  }} catch (e) {{}}     // storage can be blocked; the page then starts fitted, as on a first visit
+}});
+function restoreView() {{
+  let v = null;
+  try {{ v = JSON.parse(sessionStorage.getItem('view')); }} catch (e) {{}}
+  if (!v) {{
+    zoomTo(Math.min(1, Math.max(START_MIN, (diagram.clientWidth - 10) / svg.viewBox.baseVal.width)));
+    diagram.scrollTo(0, 0);
+    return;
+  }}
+  if (v.full) setFull(true);
+  zoomTo(v.scale);
+  diagram.scrollLeft = v.left;
+  diagram.scrollTop = v.top;
 }}
 function esc(s) {{ return s.replace(/[&<>]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;'}})[c]); }}
 function jump(id, t) {{
@@ -385,7 +453,7 @@ async function post(path, body) {{
   await fetch(path, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body)}});
   location.reload();
 }}
-document.getElementById('svg').addEventListener('click', onLink);
+document.getElementById('svg').addEventListener('click', e => dragged ? e.preventDefault() : onLink(e));
 document.querySelector('header').addEventListener('click', onLink);
 function onLink(e) {{
   const a = e.target.closest('a'); if (!a) return;
@@ -400,7 +468,7 @@ function onLink(e) {{
 Viz.instance().then(viz => {{
   svg = viz.renderSVGElement(DOT);
   const host = document.getElementById('svg'); host.innerHTML = ''; host.appendChild(svg);
-  zoom(0);
+  restoreView();
 }}).catch(err => document.getElementById('svg').textContent = 'Graphviz failed: ' + err);
 // Live: re-draw when the draft, your diff, the scope or Claude's reading changes.
 // The server stops 10 minutes after the last open page goes away; say so, and how to restart.

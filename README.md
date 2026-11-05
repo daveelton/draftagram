@@ -46,6 +46,10 @@ the project's `.gitignore` if it isn't there.
   Edges: hollow arrow for a base class, diamond at the owner for held by value, dashed for
   pointers, references and smart pointers (`OwnedArray<Foo>` counts), dotted for use in a
   signature. A relation the draft adds or removes is drawn green or red.
+- **Moving around the diagram.** Pinch or ⌘-scroll zooms around the pointer, dragging moves
+  it, and "full screen" fills the window with it (Esc closes). It starts fitted to the panel's
+  width, but never below 50% so the text stays readable, and keeps its zoom and position
+  when the page redraws.
 - **Side panel, on the right.** Tabs for the drafted change (the worktree against where the
   draft started), your uncommitted change (the checkout against HEAD), and the code of
   whatever you clicked. Clicking a class or member jumps to its first changed line.
