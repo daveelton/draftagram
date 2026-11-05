@@ -10,6 +10,7 @@ import json
 import os
 
 from api_diff import ADDED, CHANGED, REMOVED
+from api_model import ACCESS
 
 class Palette:
     """Every colour on the page, diagram and HTML alike: a dark theme."""
@@ -28,6 +29,9 @@ P = Palette
 DRAFT_FILL = {ADDED: P.ADDED, REMOVED: P.REMOVED, CHANGED: P.CHANGED}
 CURRENT_FILL = P.CURRENT
 SHOW_ALL_UP_TO = 8
+# Members are grouped under C++ access headings rather than marked with UML's + and -,
+# which beside the green and red fills read as added and removed.
+ACCESS_HEADINGS = [(mark, word) for word, mark in ACCESS.items()] + [(" ", None)]
 
 
 def esc(s):
@@ -154,11 +158,12 @@ class DraftPage:
         sid = self._select_id(self._payload(name, name))
         rows = [f'<TR><TD HREF="#sel:{sid}" BGCOLOR="{head_fill}" CELLPADDING="5">'
                 f'<B>{title}</B>{note}</TD></TR>']
-        if c.bases:
-            rows.append(f'<TR><TD ALIGN="LEFT"><FONT POINT-SIZE="9" COLOR="{P.DIM}">: '
-                        f'{esc(", ".join(c.bases))}</FONT></TD></TR>')
-        members = dict(c.members)
         work = v.work.classes.get(name)
+        bases = self._bases(c, work if name in v.prop.classes else None)
+        if bases:
+            rows.append(f'<TR><TD ALIGN="LEFT"><FONT POINT-SIZE="9" COLOR="{P.DIM}">: '
+                        f'{bases}</FONT></TD></TR>')
+        members = dict(c.members)
         if work and name in v.prop.classes:   # members the draft removes, drawn struck out
             for k, m in work.members.items():
                 members.setdefault(k, m)
@@ -172,22 +177,45 @@ class DraftPage:
                 shown.append((key, m, ps, cs, mread))
             else:
                 hidden += 1
-        for key, m, ps, cs, mread in shown:
-            text = esc(f"{m.access} {m.label}")
-            if ps == REMOVED:
-                text = f"<S>{text}</S>"
-            if not mread and not ps:
-                text = f'<FONT COLOR="{P.UNREAD_TEXT}">{text}</FONT>'
-            fill = DRAFT_FILL.get(ps) or (CURRENT_FILL if cs else P.NODE)
-            msid = self._select_id(self._payload(f"{name}::{m.label}", name, key))
-            rows.append(f'<TR><TD ALIGN="LEFT" HREF="#sel:{msid}" BGCOLOR="{fill}">'
-                        f'<FONT FACE="Courier" POINT-SIZE="10">{text}</FONT></TD></TR>')
+        for mark, heading in ACCESS_HEADINGS:
+            group = [row for row in shown if row[1].access == mark]
+            if group and heading:
+                rows.append(f'<TR><TD ALIGN="LEFT"><FONT POINT-SIZE="8.5" COLOR="{P.DIM}">'
+                            f'{heading}:</FONT></TD></TR>')
+            for key, m, ps, cs, mread in group:
+                text = esc(m.label)
+                if ps == REMOVED:
+                    text = f"<S>{text}</S>"
+                # Every member has the same markup, so Graphviz places them all alike.
+                colour = P.UNREAD_TEXT if not mread and not ps else P.TEXT
+                text = f'<FONT COLOR="{colour}">{text}</FONT>'
+                fill = DRAFT_FILL.get(ps) or (CURRENT_FILL if cs else P.NODE)
+                msid = self._select_id(self._payload(f"{name}::{m.label}", name, key))
+                rows.append(f'<TR><TD ALIGN="LEFT" HREF="#sel:{msid}" BGCOLOR="{fill}">'
+                            f'<FONT FACE="Courier" POINT-SIZE="10">&#160;&#160;{text}</FONT></TD></TR>')
         if hidden:
             rows.append(f'<TR><TD ALIGN="LEFT" HREF="#full:{esc(name)}"><FONT POINT-SIZE="9" '
                         f'COLOR="{P.LINK}">… {hidden} more (show all)</FONT></TD></TR>')
         border = P.UNREAD if not read and not pstat else P.FAINT
         return (f'<<TABLE BORDER="1" COLOR="{border}" CELLBORDER="0" CELLSPACING="0" '
                 f'BGCOLOR="{P.NODE}">{"".join(rows)}</TABLE>>')
+
+    @staticmethod
+    def _bases(c, work):
+        """The class's bases as label text, those the draft adds in green and removes struck
+        out in red. Bases are listed as well as drawn because a library base (juce::Timer) has
+        no box to draw an edge to. `work` is the class in the working tree, or None when the
+        draft adds or removes the whole class."""
+        was = work.bases if work else c.bases
+        out = []
+        for b in dict.fromkeys(c.bases + was):
+            if b not in was:
+                out.append(f'<FONT COLOR="{P.EDGE_ADDED}">{esc(b)}</FONT>')
+            elif b not in c.bases:
+                out.append(f'<FONT COLOR="{P.EDGE_REMOVED}"><S>{esc(b)}</S></FONT>')
+            else:
+                out.append(esc(b))
+        return ", ".join(out)
 
     def dot(self):
         v = self.v
@@ -284,6 +312,7 @@ header ul {{ margin:2px 0; padding-left:18px; font-family:Menlo, monospace; font
 main {{ flex:1; display:flex; min-height:0; }}
 #diagram {{ flex:1.2; overflow:auto; border-right:1px solid {p.BORDER}; position:relative; }}
 #diagram svg a {{ cursor:pointer; }}
+#diagram svg text[font-family="Courier,monospace"] {{ font-family:Menlo, monospace; }}   /* same width as Courier, which Graphviz measures */
 #zoom {{ position:sticky; top:6px; left:6px; z-index:2; }}
 button {{ font-size:12px; color:{p.TEXT}; background:{p.RAISED}; border:1px solid {p.BORDER}; }}
 #side {{ flex:1; display:flex; flex-direction:column; min-width:0; }}

@@ -39,7 +39,9 @@ the project's `.gitignore` if it isn't there.
 - **Diagram, on the left.** The draft's classes and members are coloured: green added, red
   removed (struck through), amber changed. A member counts as changed when its declaration
   differs or when the diff touches its declaration or any of its bodies, including bodies in
-  the `.cpp`. Blue marks what your own uncommitted diff changed. A member in grey text is one
+  the `.cpp`. Members are listed under `public:`, `protected:` and `private:` headings, and
+  a base class the draft adds or removes is listed in green or struck out in red. Blue marks
+  what your own uncommitted diff changed. A member in grey text is one
   Claude didn't read. A class with an orange border is one Claude hasn't read at all.
   Edges: hollow arrow for a base class, diamond at the owner for held by value, dashed for
   pointers, references and smart pointers (`OwnedArray<Foo>` counts), dotted for use in a
