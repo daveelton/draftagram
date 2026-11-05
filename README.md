@@ -142,3 +142,6 @@ draft scope demo      # lists the class under "Changed by the draft", with both 
 draft show demo       # amber method, green member; clicking them jumps to the diff
 draft drop demo
 ```
+## Licence
+
+MIT, copyright UrsaDSP / Perambulum Ltd. See `LICENSE`.
