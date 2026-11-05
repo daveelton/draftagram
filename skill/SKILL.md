@@ -38,7 +38,9 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    when the draft changes. `draft scope` lists changed files that have no note yet.
    Add up to five `checks`: real decisions for the user (a risk, a question, something to
    tidy), each with the fix you'd suggest. The user answers each Fix or Leave on the page.
-   Don't raise one again that `draft scope` lists as left by the user.
+   Don't raise one again that `draft scope` lists as left by the user. Add `commits`: one per
+   separate piece of work, with a subject under 50 characters, a body wrapped at 72 saying why,
+   and the files each takes. The page offers to commit them when the user accepts.
 5. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
    you edit. Tell the user it's open, and give them the change in two or three product-level
    sentences. The page carries the detail. Then run `draft answers <name> --wait` in the
@@ -49,6 +51,9 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them
    (with line ranges) before revising, then revise in the worktree. The page follows.
 7. **Finish when the user decides:**
+   - The user may accept from the page, with or without committing and pushing your
+     suggested commits. `draft answers --wait` then returns saying what was accepted,
+     committed and pushed. Build it if the project has a build, and report the result.
    - `draft accept <name>` applies the change to the checkout as uncommitted edits and
      removes the worktree. Build it if the project has a build, and report the result. Don't
      commit unless asked.

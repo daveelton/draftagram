@@ -11,6 +11,7 @@ import html
 import json
 import os
 import re
+import subprocess
 
 from api_diff import ADDED, CHANGED, REMOVED
 from api_model import ACCESS
@@ -141,6 +142,7 @@ class DiffPanel:
 
 
 CHECK_TAGS = {"risk": "Risk", "tidy": "Tidy", "question": "Question"}
+SUBJECT_MAX = 50
 
 
 class DraftPage:
@@ -432,6 +434,35 @@ class DraftPage:
         return (f'<span class="notes-key">written by Claude, not read from the code</span>'
                 + (f'<span class="sep">processes:</span>{procs}' if procs else ""))
 
+    # ---------- accepting and committing ----------
+
+    def _commits(self):
+        """The commits to offer: Claude's, or one of every file the draft changes."""
+        return self.notes.get("commits") or [{"subject": self.v.p.meta.get("summary", ""), "body": "",
+                                              "files": [f.path for f in self.v.drafted.files]}]
+
+    def _commit_bar(self):
+        """The commit messages to edit, folded, and a line on what accepting will commit."""
+        commits = self._commits()
+        entries = "".join(
+            f'<div class="commit"><input class="subject" value="{esc(c.get("subject", ""))}" maxlength="200">'
+            f'<span class="count"></span><textarea class="body" rows="6" wrap="off">{esc(c.get("body", ""))}</textarea>'
+            f'<div class="files">{esc("  ".join(c.get("files", [])))}</div></div>' for c in commits)
+        subjects = " · ".join(esc(c.get("subject", "")) for c in commits)
+        label = f"{len(commits)} commits" if len(commits) > 1 else "Commit message"
+        mine = sorted({f for c in commits for f in c.get("files", [])} & {f.path for f in self.v.current.files})
+        overlap = (f'<div class="overlap">These files also have your own uncommitted changes, which the '
+                   f'commit will include: {esc(", ".join(mine))}</div>') if mine else ""
+        return f'<details id="message"><summary>{label}: <b>{subjects}</b></summary>{entries}</details>{overlap}'
+
+    def _branch(self):
+        def git(*args):
+            r = subprocess.run(["git", *args], cwd=self.v.root, capture_output=True, text=True)
+            return r.stdout.strip() if r.returncode == 0 else ""
+        branch = git("rev-parse", "--abbrev-ref", "HEAD")
+        upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        return f"{branch} → {upstream}" if upstream else f"{branch}, no upstream: push will fail"
+
     # ---------- page ----------
 
     def html(self):
@@ -460,6 +491,8 @@ class DraftPage:
             overview=self._overview(), key=self._key(), first_tab="overview" if self.notes else "prop",
             sequence=json.dumps(sequence or None), token=json.dumps(self.token),
             checks=json.dumps([c["id"] for c in self.notes.checks]),
+            commit_bar=self._commit_bar(), branch=esc(self._branch()), subject_max=SUBJECT_MAX,
+            commit_files=json.dumps([c.get("files", []) for c in self._commits()]),
             mermaid='<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>' if sequence else "",
             name=esc(meta["name"]), headline=esc(meta.get("summary") or ""),
             summary=items(summary), current=items(current), warn=warn,
@@ -538,7 +571,17 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
 .check-actions button.chosen {{ background:{p.NOTE}; color:{p.BG}; border-color:{p.NOTE}; font-weight:600; }}
 .check-note {{ flex:1; font:12px -apple-system, Helvetica, sans-serif; color:{p.TEXT}; background:{p.BG}; border:1px solid {p.BORDER}; padding:2px 6px; }}
 details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.TEXT}; }}
-#actions {{ border-top:1px solid {p.BORDER}; background:{p.PANEL}; padding:8px 10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }}
+#actions {{ border-top:1px solid {p.BORDER}; background:{p.PANEL}; padding:8px 10px; max-height:55vh; overflow:auto; }}
+#actions .row {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:6px; }}
+#actions button {{ padding:4px 10px; cursor:pointer; }}
+#message summary {{ cursor:pointer; color:{p.DIM}; }} #message summary b {{ color:{p.TEXT}; font-weight:600; }}
+.commit {{ display:grid; grid-template-columns:1fr auto; gap:4px 8px; margin:6px 0; padding:8px; background:{p.BG}; border:1px solid {p.BORDER}; }}
+.commit input, .commit textarea {{ font:12px Menlo, monospace; color:{p.TEXT}; background:{p.PANEL}; border:1px solid {p.BORDER}; padding:3px 6px; }}
+.commit textarea {{ grid-column:1 / -1; white-space:pre; overflow-x:auto; resize:vertical; }}
+.commit .count {{ font-size:11px; color:{p.DIM}; align-self:center; }} .commit .count.long {{ color:{p.UNREAD}; }}
+.commit .files {{ grid-column:1 / -1; font:11px Menlo, monospace; color:{p.DIM}; overflow-wrap:anywhere; }}
+.overlap {{ color:{p.UNREAD}; font-size:12px; margin-top:4px; }}
+#log {{ white-space:pre-wrap; font:11px Menlo, monospace; background:{p.BG}; padding:6px; margin:6px 0 0; max-height:200px; overflow:auto; }}
 #actions button.primary {{ background:{p.LINK}; color:{p.BG}; border-color:{p.LINK}; font-weight:600; padding:4px 12px; cursor:pointer; }}
 #actions button:disabled {{ opacity:.5; cursor:default; }}
 #actions .status {{ color:{p.DIM}; font-size:12px; }}
@@ -559,7 +602,11 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
   <div id="prop" class="panel"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
   <div id="cur" class="panel"><div class="diff">{cur_diff}</div><div class="whole-diff">{cur_whole}</div></div>
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
-  <div id="actions"><button class="primary" id="send">Send answers to Claude</button><span class="status" id="status"></span></div>
+  <div id="actions">{commit_bar}
+   <div class="row"><button class="primary" id="send">Accept, commit, push</button><button id="commit">Accept and commit</button><button id="accept">Accept only</button><span class="status" id="status"></span></div>
+   <div class="row"><span class="status" id="answered"></span><span class="status">{branch}</span></div>
+   <pre id="log" hidden></pre>
+  </div>
  </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
@@ -569,6 +616,8 @@ const DOT = {dot};
 const SEQUENCE = {sequence};
 const TOKEN = {token};       // null on a page written by `draft render`: it can't send anything
 const CHECKS = {checks};
+const COMMIT_FILES = {commit_files};
+const SUBJECT_MAX = {subject_max};
 const SEL = {data};
 const STAMP = "{stamp}";
 let scale = 1, svg = null, dragged = false;
@@ -703,7 +752,9 @@ async function post(path, body) {{
 // draft's changes cause don't lose them; "Send" hands the round to Claude (`draft answers`).
 const answers = {{}};
 const statusLine = document.getElementById('status'), sendButton = document.getElementById('send');
-let sent = false;
+const answeredLine = document.getElementById('answered'), log = document.getElementById('log');
+const acceptButtons = [document.getElementById('commit'), document.getElementById('accept')];
+let sent = false, finished = false;
 function cardOf(id) {{ return document.querySelector(`.check[data-id="${{CSS.escape(id)}}"]`); }}
 function choose(id, d) {{
   if (answers[id] && answers[id].decision === d) delete answers[id];      // a second click undoes it
@@ -717,13 +768,44 @@ function showAnswers() {{
     card.querySelectorAll('button[data-d]').forEach(b => b.classList.toggle('chosen', b.dataset.d === d));
     card.classList.toggle('left', d === 'leave');
   }}
-  const fixes = CHECKS.filter(id => answers[id] && answers[id].decision === 'fix').length;
-  const open = CHECKS.filter(id => !answers[id]).length;
-  sendButton.textContent = fixes ? `Send ${{fixes}} fix${{fixes > 1 ? 'es' : ''}} to Claude` : 'Send answers to Claude';
-  sendButton.disabled = !TOKEN || sent || open === CHECKS.length;
-  if (!sent) statusLine.textContent = !TOKEN ? 'Written by draft render: run draft show to answer from the page.'
-                                 : open ? `${{open}} check${{open > 1 ? 's' : ''}} not answered.` : '';
+  // With a fix asked for, the main button sends the answers to Claude instead of accepting.
+  const fixes = fixCount(), open = CHECKS.filter(id => !answers[id]).length;
+  sendButton.textContent = fixes ? `Send ${{fixes}} fix${{fixes > 1 ? 'es' : ''}} to Claude` : 'Accept, commit, push';
+  acceptButtons.forEach(b => b.hidden = fixes > 0);
+  [sendButton, ...acceptButtons].forEach(b => b.disabled = !TOKEN || sent || finished);
+  answeredLine.textContent = open ? `${{open}} check${{open > 1 ? 's' : ''}} not answered.` : '';
+  if (!TOKEN) statusLine.textContent = 'Written by draft render: run draft show to accept or answer from the page.';
 }}
+function fixCount() {{ return CHECKS.filter(id => answers[id] && answers[id].decision === 'fix').length; }}
+function readCommits() {{
+  return [...document.querySelectorAll('.commit')].map((el, i) => ({{
+    subject: el.querySelector('.subject').value, body: el.querySelector('.body').value, files: COMMIT_FILES[i]}}));
+}}
+document.querySelectorAll('.commit').forEach(el => {{
+  const subject = el.querySelector('.subject'), count = el.querySelector('.count');
+  const update = () => {{ count.textContent = `${{subject.value.length}} / ${{SUBJECT_MAX}}`;
+                          count.classList.toggle('long', subject.value.length > SUBJECT_MAX); }};
+  subject.oninput = update;
+  update();
+}});
+async function accept(commit, push) {{
+  finished = true;
+  showAnswers();
+  statusLine.textContent = commit ? (push ? 'Accepting, committing and pushing…' : 'Accepting and committing…') : 'Accepting…';
+  const r = await send('/accept', {{stamp: STAMP, commit, push, commits: readCommits()}}).catch(e => null);
+  const reply = r ? await r.json().catch(e => ({{ok: false, log: 'No reply from the page server.'}}))
+                  : {{ok: false, log: 'The page server is not running.'}};
+  finished = reply.ok || (r && r.status === 200);     // once accepted, the draft is gone whatever git did
+  log.hidden = !reply.log;
+  log.textContent = reply.log;
+  statusLine.textContent = !finished ? 'Not accepted, see below.'
+      : !reply.ok ? 'Accepted, but git failed, see below.'
+      : commit ? (push ? `Accepted, committed and pushed: ${{reply.commits.join(', ')}}` : `Accepted and committed: ${{reply.commits.join(', ')}}`)
+      : 'Accepted: the change is in your checkout, uncommitted.';
+  showAnswers();
+}}
+document.getElementById('commit').onclick = () => accept(true, false);
+document.getElementById('accept').onclick = () => accept(false, false);
 document.querySelectorAll('.check').forEach(card => {{
   const id = card.dataset.id;
   card.querySelectorAll('button[data-d]').forEach(b => {{ b.disabled = !TOKEN; b.onclick = () => choose(id, b.dataset.d); }});
@@ -731,15 +813,15 @@ document.querySelectorAll('.check').forEach(card => {{
   note.disabled = !TOKEN;
   note.onchange = () => {{ if (answers[id]) {{ answers[id].note = note.value; send('/answer', {{id, answer: answers[id]}}); }} }};
 }});
-sendButton.onclick = async () => {{
+sendButton.onclick = () => fixCount() ? sendAnswers() : accept(true, true);
+async function sendAnswers() {{
   CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
   sendButton.disabled = true;
   const r = await send('/send', {{answers}}).catch(e => null);
   sent = !!(r && r.ok);
   statusLine.textContent = sent ? 'Sent to Claude. The page redraws as Claude revises the draft.' : 'Sending failed.';
   showAnswers();
-}};
-if (!CHECKS.length) document.getElementById('send').hidden = true;
+}}
 if (TOKEN) fetch('/answers').then(r => r.json()).then(saved => {{
   for (const id of CHECKS) if (saved[id]) {{
     answers[id] = saved[id];
@@ -776,6 +858,7 @@ function stopped(text) {{
   b.textContent = text;
 }}
 if (location.protocol.startsWith('http')) setInterval(async () => {{
+  if (finished) return;     // accepting from this page: its reply says what happened
   try {{
     const r = await fetch('/stamp');
     if (r.status === 410) return stopped('This draft was accepted or dropped.');

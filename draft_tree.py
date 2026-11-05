@@ -39,6 +39,9 @@ class Draft:
         self.scope_path = os.path.join(self.dir, "scope.json")
         self.notes_path = os.path.join(self.dir, "notes.json")
         self.answers_path = os.path.join(self.dir, "answers.json")
+        # What happened when the page accepted the draft. Beside the draft's folder, not in it,
+        # since accepting removes the folder; `draft answers --wait` reports it to Claude.
+        self.outcome_path = os.path.join(root, "temp", "draft", f"{name}.outcome.json")
 
     # ---------- finding drafts ----------
 
@@ -85,6 +88,8 @@ class Draft:
         if self.exists():
             raise SystemExit(f"draft '{self.name}' already exists: {self.tree}")
         self._ensure_temp_ignored()
+        if os.path.exists(self.outcome_path):
+            os.remove(self.outcome_path)    # from an earlier draft of the same name
         head = git(self.root, "rev-parse", "HEAD").strip()
         os.makedirs(self.dir, exist_ok=True)
         git(self.root, "worktree", "add", "-q", "-b", self.branch, self.tree, head)
@@ -120,6 +125,38 @@ class Draft:
         files = git(self.tree, "diff", "--cached", "--name-only", self.meta["snapshot"]).split()
         self.drop()
         return files
+
+    def commit(self, commits, push):
+        """Commit each of `commits` ([{"subject", "body", "files"}]) in the checkout, only the
+        files it lists, then push if asked. Returns (ok, ["hash subject"] made, git's output)."""
+        log, made = [], []
+
+        def run(*args, input=None):
+            r = subprocess.run(["git", *args], cwd=self.root, capture_output=True, text=True, input=input)
+            log.append(f"$ git {' '.join(args)}\n{(r.stdout + r.stderr).strip()}".strip())
+            return r.returncode == 0
+
+        for c in commits:
+            body = c.get("body", "").strip()
+            message = c["subject"].strip() + (f"\n\n{body}" if body else "") + "\n"
+            if not (run("add", "--all", "--", *c["files"]) and
+                    run("commit", "-q", "-F", "-", "--", *c["files"], input=message)):
+                return False, made, "\n".join(log)
+            made.append(git(self.root, "log", "-1", "--format=%h %s").strip())
+        if push and not run("push"):
+            return False, made, "\n".join(log)
+        return True, made, "\n".join(log)
+
+    def save_outcome(self, outcome):
+        json.dump(outcome, open(self.outcome_path, "w"), indent=2)
+
+    def take_outcome(self):
+        try:
+            outcome = json.load(open(self.outcome_path))
+        except (OSError, ValueError):
+            return None
+        os.remove(self.outcome_path)
+        return outcome
 
     def drop(self):
         git(self.root, "worktree", "remove", "--force", self.tree, check=False)

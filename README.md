@@ -71,6 +71,13 @@ the project's `.gitignore` if it isn't there.
   Claude doesn't raise them again. The next round opens with what Claude changed for each fix.
   Every POST to the page server carries a token that only the page it served knows, so another
   web page in the browser can't post to it.
+- **Accepting from the page.** The bar under the side panel holds the commits Claude suggests
+  (folded; each subject and message can be edited) and three buttons: "Accept, commit, push",
+  "Accept and commit" and "Accept only". Asking for a fix replaces them with "Send fixes to
+  Claude". Accepting is refused if the draft changed after the page was drawn, so what is
+  accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
+  its files as they are after accepting, so your own uncommitted changes in those files go in
+  too: the bar lists any such files. Push uses the branch's upstream, shown in the bar.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.

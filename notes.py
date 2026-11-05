@@ -25,7 +25,8 @@ FORMAT = """
                  "detail": "the code-level explanation (folded on the page)",
                  "file": "path", "line": 123}],
   "minorChecks": ["lesser points, shown folded", ...],
-  "sinceLastReview": [{"title": "a check the user asked to fix", "done": "what was changed"}]
+  "sinceLastReview": [{"title": "a check the user asked to fix", "done": "what was changed"}],
+  "commits":   [{"subject": "under 50 characters", "body": "why, wrapped at 72", "files": ["path", ...]}]
 }
 All fields are optional. `backticks` mark code. processes gives each separately running
 process or server its own colour: a file belongs to the first whose path prefix matches, and
@@ -35,13 +36,16 @@ lineNotes[].line is a line in the draft's version of the file.
 checks are decisions for the user, answered Fix or Leave on the page: at most MAX_CHECKS.
 Things they only need to know go in behaviour, lesser points in minorChecks. Don't raise a
 check again that `draft scope` lists as left by the user.
+commits are the commits the page offers to make once the draft is accepted, one per separate
+piece of work, each listing the draft's files it takes. Without them the page offers one
+commit of every file the draft changes.
 """
 
 MAX_CHECKS = 5
 
 FIELDS = {"kind": str, "problem": str, "summary": list, "processes": list, "links": list,
           "sequence": str, "behaviour": list, "files": dict, "lineNotes": list,
-          "checks": list, "minorChecks": list, "sinceLastReview": list}
+          "checks": list, "minorChecks": list, "sinceLastReview": list, "commits": list}
 
 
 class Notes:

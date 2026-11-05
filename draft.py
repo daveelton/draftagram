@@ -33,6 +33,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
 from notes import FORMAT, Notes   # noqa: E402
 from page import DraftPage      # noqa: E402
+from patch import Patch         # noqa: E402
 from draft_tree import Draft      # noqa: E402
 from view import DraftView, UnitCache   # noqa: E402
 
@@ -95,6 +96,32 @@ class DraftServer:
             self.page_stamp = stamp
         return self.page
 
+    def accept(self, request):
+        """Accept the draft from the page, then make the commits it asked for and push if asked.
+        Returns (HTTP status, reply). Refused if the draft changed after the page was drawn, so
+        what is accepted is what the user saw."""
+        if request.get("stamp") != DraftView(self.p, self.cache).stamp():
+            return 409, {"ok": False, "log": "The draft changed after this page was drawn. "
+                                              "The page will redraw; check it and accept again."}
+        commits = request.get("commits", []) if request.get("commit") else []
+        drafted = {f.path for f in Patch(self.p.draft_patch()).files}
+        stray = sorted({f for c in commits for f in c.get("files", [])} - drafted)
+        if stray:
+            return 400, {"ok": False, "log": "Not changed by the draft, so not committed from here: "
+                                             + ", ".join(stray)}
+        if any(not c.get("subject", "").strip() or not c.get("files") for c in commits):
+            return 400, {"ok": False, "log": "Every commit needs a subject and at least one file."}
+        try:
+            files = self.p.accept()
+        except SystemExit as e:     # Draft reports failures as SystemExit, for the command line
+            return 409, {"ok": False, "log": str(e)}
+        ok, made, log = self.p.commit(commits, request.get("push")) if commits else (True, [], "")
+        outcome = {"accepted": files, "commits": made, "pushed": ok and bool(commits and request.get("push")),
+                   "ok": ok, "log": log}
+        self.p.save_outcome(outcome)
+        print(json.dumps(outcome, indent=2), flush=True)
+        return 200, {"ok": ok, "log": log, "commits": made, "pushed": outcome["pushed"]}
+
     def serve(self):
         server = self
 
@@ -136,6 +163,10 @@ class DraftServer:
                     self._send(403, "wrong token")
                     return
                 name = body.get("name", "")
+                if self.path == "/accept":
+                    code, reply = server.accept(body)
+                    self._send(code, json.dumps(reply), "application/json")
+                    return
                 if self.path == "/answer":
                     server.p.save_answer(body["id"], body.get("answer"))
                 elif self.path == "/send":
@@ -240,7 +271,17 @@ class DraftCli:
         p = Draft.find(self.root, a.name)
         while True:
             if not p.exists():
-                print(f"The draft '{p.name}' is gone: it was accepted or dropped.")
+                outcome = p.take_outcome()
+                if not outcome:
+                    print(f"The draft '{p.name}' is gone: it was accepted or dropped.")
+                    return
+                print(f"The user accepted '{p.name}' from the page: " + ", ".join(outcome["accepted"]))
+                for c in outcome["commits"]:
+                    print(f"  committed {c}")
+                if outcome["pushed"]:
+                    print("  and pushed")
+                if not outcome["ok"]:
+                    print("It stopped on a git failure:\n" + outcome["log"])
                 return
             sent = p.take_sent()
             if sent:
