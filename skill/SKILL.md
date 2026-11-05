@@ -7,7 +7,7 @@ description: Show a code change as a live class diagram plus diffs before it lan
 
 The user reviews the change on a page, not from your description of it. The page is drawn
 from the code itself, so make the real change; don't describe one you haven't made. The tool
-and its docs are in `~/mac-setup/draft/` (README.md).
+and its docs are in the draftagram repo it was installed from (README.md; `readlink ~/.claude/skills/draft` finds it).
 
 ## What to draft
 

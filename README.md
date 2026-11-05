@@ -1,4 +1,4 @@
-# draft
+# draftagram: the `draft` tool
 
 See a change Claude drafts as a class diagram and code diffs, side by side, before it
 lands in the checkout. The idea comes from Together's simultaneous round-trip engineering:
@@ -6,6 +6,31 @@ the diagram is never a separate model, it's drawn from the code each time. So wh
 review is the code Claude actually wrote, drawn two ways, not Claude's description of it.
 
 Run from Claude with the `/draft` skill (`skill/SKILL.md`), or by hand with `draft --help`.
+
+## Install
+
+For macOS with Claude Code. Claude can follow these steps as written.
+
+1. **Requirements.** `uv` (`brew install uv`) runs the tool and installs its one Python
+   dependency, the libclang bindings, on first use. Apple's Command Line Tools
+   (`xcode-select --install`) or Xcode provide libclang itself. The diagram needs C++ projects
+   with a CMake `compile_commands.json`: set `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, or use CLion,
+   whose `cmake-build-debug` folder usually already has one.
+2. **Clone** this repo somewhere permanent, for example
+   `git clone git@github.com:daveelton/draftagram.git ~/Development/draftagram`.
+3. **Link the command and the skill.** Links, not copies, so a `git pull` updates both:
+   ```
+   mkdir -p ~/.local/bin ~/.claude/skills
+   ln -sfn ~/Development/draftagram/draft.py ~/.local/bin/draft
+   ln -sfn ~/Development/draftagram/skill ~/.claude/skills/draft
+   ```
+   `~/.local/bin` must be on `PATH`.
+4. **Check.** `draft --help` prints the commands. The first run takes a few seconds while `uv`
+   fetches the bindings. In a new Claude Code session, `/draft` is then available.
+
+Nothing else is changed: there's no hook, and Claude Code's settings aren't touched. Each
+project gets a `temp/draft/` folder while a draft is open, and `draft start` adds `temp/` to
+the project's `.gitignore` if it isn't there.
 
 ## What you see
 

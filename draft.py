@@ -13,7 +13,7 @@
     draft drop [NAME]                   throw the draft away
     draft list
 
-Docs: ~/mac-setup/draft/README.md
+Docs: README.md beside this script (readlink -f "$(which draft)").
 """
 import argparse
 import json
