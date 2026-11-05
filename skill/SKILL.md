@@ -36,10 +36,16 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    the notes say why, in plain words: the problem in a sentence or two, what the draft does
    about it, the processes involved, and a line on each file. Keep them short, and update them
    when the draft changes. `draft scope` lists changed files that have no note yet.
+   Add up to five `checks`: real decisions for the user (a risk, a question, something to
+   tidy), each with the fix you'd suggest. The user answers each Fix or Leave on the page.
+   Don't raise one again that `draft scope` lists as left by the user.
 5. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
    you edit. Tell the user it's open, and give them the change in two or three product-level
-   sentences. The page carries the detail.
-6. **Before you reply to any feedback, run `draft scope <name>`.** If it lists classes
+   sentences. The page carries the detail. Then run `draft answers <name> --wait` in the
+   background: it returns when the user sends their answers from the page. Make each fix they
+   asked for, update the notes with `sinceLastReview` saying what you changed, and run it again.
+6. **Before you reply to any feedback, run `draft scope <name>`.** It also says if answers
+   from the page are waiting (`draft answers` prints them). If it lists classes
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them
    (with line ranges) before revising, then revise in the worktree. The page follows.
 7. **Finish when the user decides:**

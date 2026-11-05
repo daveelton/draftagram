@@ -18,17 +18,30 @@ FORMAT = """
   "sequence":  "mermaid sequenceDiagram source; group participants with box <process> ... end",
   "behaviour": [{"case": "...", "before": "...", "after": "..."}],
   "files":     {"path": {"role": "new | changed | ...", "note": "what changed in it, one line"}},
-  "lineNotes": [{"file": "path", "line": 123, "note": "..."}]
+  "lineNotes": [{"file": "path", "line": 123, "note": "..."}],
+  "checks":    [{"id": "short-slug", "tag": "risk | tidy | question",
+                 "title": "what could go wrong, in plain words, one line",
+                 "suggestion": "the fix Claude would make, one line",
+                 "detail": "the code-level explanation (folded on the page)",
+                 "file": "path", "line": 123}],
+  "minorChecks": ["lesser points, shown folded", ...],
+  "sinceLastReview": [{"title": "a check the user asked to fix", "done": "what was changed"}]
 }
 All fields are optional. `backticks` mark code. processes gives each separately running
 process or server its own colour: a file belongs to the first whose path prefix matches, and
 a process with no paths (a server elsewhere) appears only in the sequence diagram. links are
 connections the code can't show, drawn on the diagram between classes that are in it.
 lineNotes[].line is a line in the draft's version of the file.
+checks are decisions for the user, answered Fix or Leave on the page: at most MAX_CHECKS.
+Things they only need to know go in behaviour, lesser points in minorChecks. Don't raise a
+check again that `draft scope` lists as left by the user.
 """
 
+MAX_CHECKS = 5
+
 FIELDS = {"kind": str, "problem": str, "summary": list, "processes": list, "links": list,
-          "sequence": str, "behaviour": list, "files": dict, "lineNotes": list}
+          "sequence": str, "behaviour": list, "files": dict, "lineNotes": list,
+          "checks": list, "minorChecks": list, "sinceLastReview": list}
 
 
 class Notes:
@@ -56,6 +69,14 @@ class Notes:
         for p in data.get("processes", []) if isinstance(data.get("processes"), list) else []:
             if not isinstance(p, dict) or not isinstance(p.get("name"), str):
                 out.append("each process needs a name")
+        checks = data.get("checks", []) if isinstance(data.get("checks"), list) else []
+        if len(checks) > MAX_CHECKS:
+            out.append(f"{len(checks)} checks: keep to {MAX_CHECKS}, and move the rest to minorChecks")
+        ids = [c.get("id") for c in checks if isinstance(c, dict)]
+        if len(ids) != len(checks) or not all(isinstance(i, str) and i for i in ids) or len(set(ids)) != len(ids):
+            out.append("each check needs its own id")
+        if any(not isinstance(c, dict) or not c.get("title") for c in checks):
+            out.append("each check needs a title")
         return out
 
     def __bool__(self):
@@ -78,6 +99,10 @@ class Notes:
             if any(path.startswith(prefix) for prefix in p.get("paths", [])):
                 return i
         return -1
+
+    @property
+    def checks(self):
+        return self.data.get("checks", [])
 
     def file_note(self, path):
         return self.data.get("files", {}).get(path, {})

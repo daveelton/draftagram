@@ -63,6 +63,14 @@ the project's `.gitignore` if it isn't there.
   round its classes on the diagram and a label on its files. The draft's diffs carry a note on
   each file and on lines that need one, and the diagram draws links the code can't show, such
   as an HTTP call. Claude stores them with `draft notes`; without them the page is as before.
+- **Checks.** Up to five decisions Claude wants from you, as cards at the end of the Overview:
+  each says what could go wrong and the fix Claude suggests, with Fix and Leave buttons and an
+  optional note. Answers are saved as you click, so the page's reloads keep them. "Send fixes to
+  Claude" hands them over: `draft answers --wait`, which Claude runs in the background, prints
+  them. Checks you leave are remembered for the draft, listed folded on later rounds, and
+  Claude doesn't raise them again. The next round opens with what Claude changed for each fix.
+  Every POST to the page server carries a token that only the page it served knows, so another
+  web page in the browser can't post to it.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.

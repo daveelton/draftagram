@@ -9,6 +9,7 @@
     draft show [NAME]                   open the live page (diagram + diffs) in the browser
     draft scope [NAME]                  what's in the diagram, as text (for Claude)
     draft notes [NAME] --file FILE      Claude's notes for the page (--format: what they hold)
+    draft answers [NAME] [--wait]       the user's Fix/Leave answers sent from the page
     draft render [NAME] [--out FILE]    write the page once, without the live server
     draft accept [NAME]                 apply the draft to your checkout, uncommitted
     draft drop [NAME]                   throw the draft away
@@ -19,6 +20,7 @@ Docs: README.md beside this script (readlink -f "$(which draft)").
 import argparse
 import json
 import os
+import secrets
 import signal
 import socket
 import subprocess
@@ -38,12 +40,17 @@ from view import DraftView, UnitCache   # noqa: E402
 # tab), so this long without a request means no page is open: the server exits. The draft
 # stays; `draft show` starts the server again.
 IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 10 * 60))
+WAIT_POLL_SECONDS = 1
 
 
 class DraftServer:
     """Serves one draft's page on localhost. The page polls /stamp and reloads when the
     draft, the user's diff, the scope or Claude's reading changes; clicks on ghosts and
-    "show all" POST back here and change the scope."""
+    "show all" POST back here and change the scope, and answers to Claude's checks are
+    saved and sent from here.
+
+    Every POST must carry the server's token, which only the page it serves knows, so
+    another web page open in the browser can't post to it."""
 
     def __init__(self, draft):
         self.p = draft
@@ -51,6 +58,7 @@ class DraftServer:
         self.page, self.page_stamp = None, None
         self.last_seen = time.time()
         self.info_path = os.path.join(draft.dir, "server.json")
+        self.token = secrets.token_urlsafe(24)
 
     @classmethod
     def running(cls, draft):
@@ -83,7 +91,7 @@ class DraftServer:
         view = DraftView(self.p, self.cache)
         stamp = view.stamp()
         if stamp != self.page_stamp:
-            self.page = DraftPage(view.build(), stamp).html()
+            self.page = DraftPage(view.build(), stamp, self.token).html()
             self.page_stamp = stamp
         return self.page
 
@@ -111,6 +119,8 @@ class DraftServer:
                 try:
                     if self.path == "/stamp":
                         self._send(200, DraftView(server.p, server.cache).stamp())
+                    elif self.path == "/answers":
+                        self._send(200, json.dumps(server.p.answers), "application/json")
                     elif self.path == "/":
                         self._send(200, server.render(), "text/html")
                     else:
@@ -122,8 +132,15 @@ class DraftServer:
 
             def do_POST(self):
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                if self.headers.get("X-Draft-Token") != server.token:
+                    self._send(403, "wrong token")
+                    return
                 name = body.get("name", "")
-                if self.path == "/expand":
+                if self.path == "/answer":
+                    server.p.save_answer(body["id"], body.get("answer"))
+                elif self.path == "/send":
+                    server.p.send_answers(server.p.notes.checks, body.get("answers", {}))
+                elif self.path == "/expand":
                     view = DraftView(server.p, server.cache).build()
                     c = view.drawn(name)
                     if c:
@@ -164,6 +181,9 @@ class DraftCli:
         n.add_argument("name", nargs="?")
         n.add_argument("--file")
         n.add_argument("--format", action="store_true")
+        w = sub.add_parser("answers")
+        w.add_argument("name", nargs="?")
+        w.add_argument("--wait", action="store_true")
         r = sub.add_parser("render")
         r.add_argument("name", nargs="?")
         r.add_argument("--out")
@@ -192,7 +212,7 @@ class DraftCli:
         p = Draft.find(self.root, a.name)
         view = DraftView(p)
         stamp = view.stamp()
-        html = DraftPage(view.build(), stamp).html()
+        html = DraftPage(view.build(), stamp, None).html()
         out = a.out or os.path.join(p.dir, "page.html")
         open(out, "w").write(html)
         print(out)
@@ -213,6 +233,33 @@ class DraftCli:
             raise SystemExit("notes not saved:\n  " + "\n  ".join(problems))
         p.set_notes(data)
         print(f"Notes saved for '{p.name}'; an open page redraws with them.")
+
+    def cmd_answers(self, a):
+        """Print the answers the user sent from the page, and take them. With --wait, wait for
+        some: Claude runs this in the background after `draft show`."""
+        p = Draft.find(self.root, a.name)
+        while True:
+            if not p.exists():
+                print(f"The draft '{p.name}' is gone: it was accepted or dropped.")
+                return
+            sent = p.take_sent()
+            if sent:
+                break
+            if not a.wait:
+                print("No answers waiting.")
+                return
+            if not DraftServer.running(p):
+                print(f"The page server stopped without answers. `draft show {p.name}` starts it again.")
+                return
+            time.sleep(WAIT_POLL_SECONDS)
+        print("The user's answers to your checks:")
+        for s in sent:
+            note = f"  (note: {s['note']})" if s.get("note") else ""
+            print(f"  {s['decision'].upper():13} {s['title']}{note}")
+            if s["decision"] == "fix" and s.get("suggestion"):
+                print(f"  {'':13} you suggested: {s['suggestion']}")
+        print("Make the fixes in the worktree, then update the notes: a new set of checks if any, and "
+              "sinceLastReview saying what you changed for each fix. Don't raise the left ones again.")
 
     def cmd_scope(self, a):
         p = Draft.find(self.root, a.name)
@@ -239,6 +286,10 @@ class DraftCli:
             print("draft:", line)
         for d in v.diagnostics:
             print("parser:", d)
+        if p.sent:
+            print("ANSWERS FROM THE PAGE, NOT TAKEN YET: run draft answers")
+        for item in p.left:
+            print(f"left by the user, don't raise again: {item['title']}" + (f" ({item['note']})" if item.get("note") else ""))
         if not p.notes:
             print("notes: none yet (draft notes --format)")
         else:

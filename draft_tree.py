@@ -38,6 +38,7 @@ class Draft:
         self.meta_path = os.path.join(self.dir, "meta.json")
         self.scope_path = os.path.join(self.dir, "scope.json")
         self.notes_path = os.path.join(self.dir, "notes.json")
+        self.answers_path = os.path.join(self.dir, "answers.json")
 
     # ---------- finding drafts ----------
 
@@ -195,6 +196,70 @@ class Draft:
 
     def set_notes(self, data):
         json.dump(data, open(self.notes_path, "w"), indent=2)
+
+    # ---------- the user's answers to Claude's checks ----------
+    # answers.json: {"answers": {check id: {"decision": "fix" | "leave", "note"}}, the round
+    # being answered; "sent": [answers sent to Claude and not taken yet]; "left": [checks the
+    # user chose to leave on earlier rounds, which Claude shouldn't raise again]}
+
+    def _answers(self):
+        try:
+            return json.load(open(self.answers_path))
+        except (OSError, ValueError):
+            return {}
+
+    def _save_answers(self, data):
+        # The page server writes this and `draft answers` takes from it, in separate processes:
+        # write a whole new file and rename it over, so neither reads one half-written.
+        tmp = self.answers_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(data, f, indent=2)
+        os.replace(tmp, self.answers_path)
+
+    @property
+    def answers(self):
+        return self._answers().get("answers", {})
+
+    @property
+    def sent(self):
+        return self._answers().get("sent", [])
+
+    @property
+    def left(self):
+        return self._answers().get("left", [])
+
+    def save_answer(self, check_id, answer):
+        """Record one answer as the user clicks, so a reload of the page keeps it. None clears it."""
+        data = self._answers()
+        answers = data.setdefault("answers", {})
+        if answer:
+            answers[check_id] = {"decision": answer["decision"], "note": answer.get("note", "")}
+        else:
+            answers.pop(check_id, None)
+        self._save_answers(data)
+
+    def send_answers(self, checks, answers):
+        """Hand this round's answers to Claude: every check with its decision, and the ones
+        left remembered for later rounds."""
+        data = self._answers()
+        sent = data.setdefault("sent", [])
+        left = data.setdefault("left", [])
+        for c in checks:
+            a = answers.get(c["id"]) or {}
+            sent.append({"id": c["id"], "title": c.get("title", ""), "suggestion": c.get("suggestion", ""),
+                         "decision": a.get("decision", "not answered"), "note": a.get("note", "")})
+            if a.get("decision") == "leave" and all(item["id"] != c["id"] for item in left):
+                left.append({"id": c["id"], "title": c.get("title", ""), "note": a.get("note", "")})
+        data["answers"] = {}
+        self._save_answers(data)
+
+    def take_sent(self):
+        """The answers sent and not taken yet; taking them clears them."""
+        data = self._answers()
+        sent = data.pop("sent", [])
+        if sent:
+            self._save_answers(data)
+        return sent
 
     # ---------- what the user has added to the diagram ----------
     # scope.json: {"expanded": [{"name", "file"}], "full": [class names drawn with every member]}

@@ -140,10 +140,16 @@ class DiffPanel:
         return "\n".join(out)
 
 
+CHECK_TAGS = {"risk": "Risk", "tidy": "Tidy", "question": "Question"}
+
+
 class DraftPage:
-    def __init__(self, view, stamp):
+    def __init__(self, view, stamp, token):
+        """`token` is the page server's, which the page sends with each POST; None for a page
+        written by `draft render`, which can't send anything."""
         self.v = view
         self.stamp = stamp
+        self.token = token
         self.selectable = {}    # {id: what the side panel shows when it's clicked}
         self.notes = view.p.notes
         self.prop_panel = DiffPanel(view.drafted, "P", self.notes, True)
@@ -351,6 +357,10 @@ class DraftPage:
             return ('<p class="empty">No notes from Claude yet. Everything else on the page is read '
                     'from the code; Claude adds what the draft fixes or builds with <code>draft notes</code>.</p>')
         out = []
+        if n.get("sinceLastReview"):
+            out.append('<div class="since"><div class="label">Since your last review</div><ul class="notes">'
+                       + "".join(f'<li><b>{note_html(i.get("title", ""))}</b>: {note_html(i.get("done", ""))}</li>'
+                                 for i in n.get("sinceLastReview")) + "</ul></div>")
         if n.get("problem"):
             out.append(f'<div class="problem"><div class="label">{"What is needed" if n.is_feature else "The problem"}'
                        f'</div><p>{note_html(n.get("problem"))}</p></div>')
@@ -364,7 +374,42 @@ class DraftPage:
                        f'<tr><th>Situation</th><th>Before</th><th>After</th></tr>{rows}</table>')
         if n.get("sequence"):
             out.append('<div class="label">What happens at run time</div><div id="sequence">Drawing…</div>')
+        out.append(self._checks())
         return "\n".join(out)
+
+    def _checks(self):
+        """Claude's checks as cards the user answers Fix or Leave, then the lesser points and
+        the checks left on earlier rounds, folded."""
+        n, v = self.notes, self.v
+        cards = []
+        for c in n.checks:
+            where = ""
+            if c.get("file"):
+                line = c.get("line") or 1
+                path = os.path.join(v.root, c["file"])
+                row = self.prop_panel.anchor(v.root, [(path, line, line)], []) or \
+                    self.prop_panel.anchor(v.root, [(path, line - 5, line + 5)], [])
+                text = esc(f'{c["file"].split("/")[-1]}:{line}' if c.get("line") else c["file"])
+                where = (f'<a href="#" onclick="jump(\'{row}\', \'prop\'); return false">{text}</a>' if row
+                         else f"<span>{text}</span>")
+            detail = (f'<details><summary>Detail</summary><p>{note_html(c.get("detail", ""))}</p>{where}</details>'
+                      if c.get("detail") or where else "")
+            suggestion = (f'<div class="suggest"><span>Suggest:</span> {note_html(c["suggestion"])}</div>'
+                          if c.get("suggestion") else "")
+            cards.append(f'<div class="check" data-id="{esc(c["id"])}"><div class="check-head">'
+                         f'<span class="tag">{esc(CHECK_TAGS.get(c.get("tag"), "Check"))}</span>'
+                         f'<b>{note_html(c["title"])}</b></div>{suggestion}{detail}'
+                         f'<div class="check-actions"><button data-d="fix">Fix</button><button data-d="leave">Leave</button>'
+                         f'<input class="check-note" placeholder="Note (optional)"></div></div>')
+        minor = n.get("minorChecks", [])
+        left = v.p.left
+        return ('<div class="label">Check before accepting</div>'
+                + ("".join(cards) or '<p class="empty">Nothing to decide.</p>')
+                + (f'<details class="minor"><summary>{len(minor)} minor point{"s" if len(minor) > 1 else ""}</summary><ul class="notes">'
+                   + "".join(f"<li>{note_html(m)}</li>" for m in minor) + "</ul></details>" if minor else "")
+                + (f'<details class="minor"><summary>Left on an earlier round ({len(left)})</summary><ul class="notes">'
+                   + "".join(f'<li>{note_html(i["title"])}{" (" + note_html(i["note"]) + ")" if i.get("note") else ""}</li>'
+                             for i in left) + "</ul></details>" if left else ""))
 
     def _sequence(self):
         """The sequence diagram's source, each `box <process>` group tinted in its process's colour."""
@@ -413,7 +458,8 @@ class DraftPage:
         sequence = self._sequence()
         return PAGE.format(p=P,
             overview=self._overview(), key=self._key(), first_tab="overview" if self.notes else "prop",
-            sequence=json.dumps(sequence or None),
+            sequence=json.dumps(sequence or None), token=json.dumps(self.token),
+            checks=json.dumps([c["id"] for c in self.notes.checks]),
             mermaid='<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>' if sequence else "",
             name=esc(meta["name"]), headline=esc(meta.get("summary") or ""),
             summary=items(summary), current=items(current), warn=warn,
@@ -480,6 +526,22 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
 .proc {{ font-size:11px; margin-left:10px; }}
 .role {{ font-weight:normal; font-size:10.5px; color:{p.DIM}; margin-left:8px; text-transform:uppercase; letter-spacing:.04em; }}
 .file-note {{ background:{p.NOTE_BG}; border-left:3px solid {p.NOTE}; padding:5px 10px; margin:4px 0 6px; font-size:12.5px; line-height:1.4; }}
+.since {{ border-left:3px solid {p.NOTE}; padding:0 0 4px 12px; margin-bottom:12px; }} .since .label {{ margin-top:0; }}
+.check {{ border:1px solid {p.BORDER}; border-left:3px solid {p.NOTE}; background:{p.PANEL}; border-radius:4px; padding:8px 10px; margin:6px 0; }}
+.check.left {{ opacity:.55; }}
+.check-head {{ display:flex; gap:8px; align-items:baseline; }}
+.check .tag {{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:{p.NOTE}; border:1px solid {p.NOTE}; border-radius:3px; padding:0 4px; }}
+.check .suggest {{ margin-top:4px; }} .check .suggest span {{ color:{p.DIM}; }}
+.check details {{ margin-top:4px; color:{p.DIM}; }} .check details p {{ margin:4px 0; color:{p.TEXT}; }}
+.check-actions {{ display:flex; gap:6px; margin-top:6px; align-items:center; }}
+.check-actions button {{ padding:2px 12px; cursor:pointer; }}
+.check-actions button.chosen {{ background:{p.NOTE}; color:{p.BG}; border-color:{p.NOTE}; font-weight:600; }}
+.check-note {{ flex:1; font:12px -apple-system, Helvetica, sans-serif; color:{p.TEXT}; background:{p.BG}; border:1px solid {p.BORDER}; padding:2px 6px; }}
+details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.TEXT}; }}
+#actions {{ border-top:1px solid {p.BORDER}; background:{p.PANEL}; padding:8px 10px; display:flex; flex-wrap:wrap; gap:8px; align-items:center; }}
+#actions button.primary {{ background:{p.LINK}; color:{p.BG}; border-color:{p.LINK}; font-weight:600; padding:4px 12px; cursor:pointer; }}
+#actions button:disabled {{ opacity:.5; cursor:default; }}
+#actions .status {{ color:{p.DIM}; font-size:12px; }}
 .line-note {{ background:{p.NOTE_BG}; border-left:3px solid {p.NOTE}; padding:3px 8px; margin:2px 0 4px; font:12px -apple-system, Helvetica, sans-serif; white-space:normal; }}
 </style></head><body>
 <header>
@@ -497,6 +559,7 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
   <div id="prop" class="panel"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
   <div id="cur" class="panel"><div class="diff">{cur_diff}</div><div class="whole-diff">{cur_whole}</div></div>
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
+  <div id="actions"><button class="primary" id="send">Send answers to Claude</button><span class="status" id="status"></span></div>
  </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
@@ -504,6 +567,8 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
 <script>
 const DOT = {dot};
 const SEQUENCE = {sequence};
+const TOKEN = {token};       // null on a page written by `draft render`: it can't send anything
+const CHECKS = {checks};
 const SEL = {data};
 const STAMP = "{stamp}";
 let scale = 1, svg = null, dragged = false;
@@ -627,10 +692,62 @@ function select(sid) {{
   document.getElementById('code').innerHTML = h;
   if (s.prop) jump(s.prop, 'prop'); else if (s.cur) jump(s.cur, 'cur'); else tab('code');
 }}
+function send(path, body) {{
+  return fetch(path, {{method:'POST', headers:{{'Content-Type':'application/json', 'X-Draft-Token':TOKEN}}, body:JSON.stringify(body)}});
+}}
 async function post(path, body) {{
-  await fetch(path, {{method:'POST', headers:{{'Content-Type':'application/json'}}, body:JSON.stringify(body)}});
+  await send(path, body);
   location.reload();
 }}
+// Answers to Claude's checks. Each is saved on the server as it's made, so the reloads the
+// draft's changes cause don't lose them; "Send" hands the round to Claude (`draft answers`).
+const answers = {{}};
+const statusLine = document.getElementById('status'), sendButton = document.getElementById('send');
+let sent = false;
+function cardOf(id) {{ return document.querySelector(`.check[data-id="${{CSS.escape(id)}}"]`); }}
+function choose(id, d) {{
+  if (answers[id] && answers[id].decision === d) delete answers[id];      // a second click undoes it
+  else answers[id] = {{decision: d, note: cardOf(id).querySelector('.check-note').value}};
+  send('/answer', {{id, answer: answers[id] || null}});
+  showAnswers();
+}}
+function showAnswers() {{
+  for (const id of CHECKS) {{
+    const card = cardOf(id), d = answers[id] && answers[id].decision;
+    card.querySelectorAll('button[data-d]').forEach(b => b.classList.toggle('chosen', b.dataset.d === d));
+    card.classList.toggle('left', d === 'leave');
+  }}
+  const fixes = CHECKS.filter(id => answers[id] && answers[id].decision === 'fix').length;
+  const open = CHECKS.filter(id => !answers[id]).length;
+  sendButton.textContent = fixes ? `Send ${{fixes}} fix${{fixes > 1 ? 'es' : ''}} to Claude` : 'Send answers to Claude';
+  sendButton.disabled = !TOKEN || sent || open === CHECKS.length;
+  if (!sent) statusLine.textContent = !TOKEN ? 'Written by draft render: run draft show to answer from the page.'
+                                 : open ? `${{open}} check${{open > 1 ? 's' : ''}} not answered.` : '';
+}}
+document.querySelectorAll('.check').forEach(card => {{
+  const id = card.dataset.id;
+  card.querySelectorAll('button[data-d]').forEach(b => {{ b.disabled = !TOKEN; b.onclick = () => choose(id, b.dataset.d); }});
+  const note = card.querySelector('.check-note');
+  note.disabled = !TOKEN;
+  note.onchange = () => {{ if (answers[id]) {{ answers[id].note = note.value; send('/answer', {{id, answer: answers[id]}}); }} }};
+}});
+sendButton.onclick = async () => {{
+  CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
+  sendButton.disabled = true;
+  const r = await send('/send', {{answers}}).catch(e => null);
+  sent = !!(r && r.ok);
+  statusLine.textContent = sent ? 'Sent to Claude. The page redraws as Claude revises the draft.' : 'Sending failed.';
+  showAnswers();
+}};
+if (!CHECKS.length) document.getElementById('send').hidden = true;
+if (TOKEN) fetch('/answers').then(r => r.json()).then(saved => {{
+  for (const id of CHECKS) if (saved[id]) {{
+    answers[id] = saved[id];
+    cardOf(id).querySelector('.check-note').value = saved[id].note || '';
+  }}
+  showAnswers();
+}});
+showAnswers();
 document.getElementById('svg').addEventListener('click', e => dragged ? e.preventDefault() : onLink(e));
 document.querySelector('header').addEventListener('click', onLink);
 function onLink(e) {{
