@@ -130,17 +130,21 @@ class Draft:
 
     # ---------- the three states ----------
 
-    def draft_patch(self, binary=False, context=3):
+    def draft_patch(self, binary=False, context=3, whole=False):
+        """The draft's diff. `whole` shows the whole function around each change."""
         git(self.tree, "add", "-A")
         args = ["diff", "--cached", f"-U{context}", self.meta["snapshot"]]
-        return git(self.tree, *(args + ["--binary"] if binary else args))
+        args += ["--binary"] if binary else []
+        args += ["--function-context"] if whole else []
+        return git(self.tree, *args)
 
-    def current_patch(self, context=3):
+    def current_patch(self, context=3, whole=False):
         """The user's uncommitted diff, untracked files included as additions."""
-        out = git(self.root, "diff", f"-U{context}", "HEAD")
+        extra = ["--function-context"] if whole else []
+        out = git(self.root, "diff", f"-U{context}", *extra, "HEAD")
         for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
             if f and not f.startswith("temp/"):
-                r = subprocess.run(["git", "diff", "--no-index", f"-U{context}", "/dev/null", f],
+                r = subprocess.run(["git", "diff", "--no-index", f"-U{context}", *extra, "/dev/null", f],
                                    cwd=self.root, capture_output=True, text=True)
                 out += r.stdout
         return out

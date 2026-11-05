@@ -17,6 +17,7 @@ from reads import ReadLog
 
 CPP_EXTS = SOURCE_EXTS + HEADER_EXTS
 MAX_GHOSTS = 24
+DIFF_CONTEXT = 8    # lines shown around each change; accept still applies with git's usual 3
 
 
 class UnitCache:
@@ -65,8 +66,10 @@ class DraftView:
 
     def build(self):
         p = self.p
-        self.current = Patch(p.current_patch())
-        self.drafted = Patch(p.draft_patch())
+        self.current = Patch(p.current_patch(DIFF_CONTEXT))
+        self.drafted = Patch(p.draft_patch(context=DIFF_CONTEXT))
+        self.current_whole = Patch(p.current_patch(DIFF_CONTEXT, whole=True))
+        self.drafted_whole = Patch(p.draft_patch(context=DIFF_CONTEXT, whole=True))
         head_state, prop_state = p.state_files()
         project = self.project_files() | {f for f in prop_state if f.endswith(CPP_EXTS)}
 

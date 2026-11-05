@@ -52,7 +52,9 @@ the project's `.gitignore` if it isn't there.
   when the page redraws.
 - **Side panel, on the right.** Tabs for the drafted change (the worktree against where the
   draft started), your uncommitted change (the checkout against HEAD), and the code of
-  whatever you clicked. Clicking a class or member jumps to its first changed line.
+  whatever you clicked. Clicking a class or member jumps to its first changed line. Diffs show
+  8 lines around each change, and "whole functions" shows the whole function instead. A file
+  with a long diff starts folded (over 600 lines, or over 150 when the whole diff is over 3000).
 - **Header.** A text summary of the API changes in each diff, and how the scope was chosen.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's

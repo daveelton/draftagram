@@ -29,6 +29,11 @@ P = Palette
 DRAFT_FILL = {ADDED: P.ADDED, REMOVED: P.REMOVED, CHANGED: P.CHANGED}
 CURRENT_FILL = P.CURRENT
 SHOW_ALL_UP_TO = 8
+# A file whose diff is longer than this starts folded, and so does any file over
+# FOLD_IN_BIG_CHANGE_ROWS when the whole diff is over BIG_CHANGE_ROWS.
+FOLD_FILE_ROWS = 600
+BIG_CHANGE_ROWS = 3000
+FOLD_IN_BIG_CHANGE_ROWS = 150
 # Members are grouped under C++ access headings rather than marked with UML's + and -,
 # which beside the green and red fills read as added and removed.
 ACCESS_HEADINGS = [(mark, word) for word, mark in ACCESS.items()] + [(" ", None)]
@@ -39,12 +44,23 @@ def esc(s):
 
 
 class DiffPanel:
-    """One diff rendered as HTML rows, with an anchor per line so the diagram can jump to it."""
+    """One diff rendered as HTML rows, with an anchor per line so the diagram can jump to it.
 
-    def __init__(self, patch, prefix):
+    The whole-function version of a diff is a second panel made with `like` set to the first:
+    it shares the first's file numbers and folding, so an anchor in one is found in the other
+    by its prefix alone (P-3-n12 and PW-3-n12)."""
+
+    def __init__(self, patch, prefix, like=None):
         self.patch = patch
         self.prefix = prefix
+        if like:
+            self.index, self.folded = like.index, like.folded
+            return
         self.index = {f.path: i for i, f in enumerate(patch.files)}
+        sizes = {f.path: sum(len(rows) for _, rows in f.hunks) for f in patch.files}
+        big = sum(sizes.values()) > BIG_CHANGE_ROWS
+        self.folded = {path for path, n in sizes.items()
+                       if n > FOLD_FILE_ROWS or (big and n > FOLD_IN_BIG_CHANGE_ROWS)}
 
     def anchor(self, root, new_spans, old_spans):
         """The first changed row inside the given spans ([(path, first, last)]), else the
@@ -70,10 +86,14 @@ class DiffPanel:
         if not self.patch.files:
             return '<p class="empty">No changes.</p>'
         out = []
-        for i, f in enumerate(self.patch.files):
+        for f in self.patch.files:
+            i = self.index[f.path]
             label = f.path if f.old_path == f.new_path else \
                 f"{f.old_path or '(new)'} → {f.new_path or '(deleted)'}"
-            out.append(f'<div class="file"><div class="fname">{esc(label)}</div><table>')
+            rows = sum(len(r) for _, r in f.hunks)
+            size = f' <span class="rows">{rows} lines, folded</span>' if f.path in self.folded else ""
+            state = "" if f.path in self.folded else " open"
+            out.append(f'<details class="file"{state}><summary class="fname">{esc(label)}{size}</summary><table>')
             for header, rows in f.hunks:
                 out.append(f'<tr class="hunk"><td></td><td></td><td>{esc(header)}</td></tr>')
                 for kind, o, n, text in rows:
@@ -83,7 +103,7 @@ class DiffPanel:
                     nn = "" if kind == "-" else n
                     out.append(f'<tr class="{cls}" id="{rid}"><td class="ln">{on}</td>'
                                f'<td class="ln">{nn}</td><td class="src">{kind}{esc(text)}</td></tr>')
-            out.append("</table></div>")
+            out.append("</table></details>")
         return "\n".join(out)
 
 
@@ -94,6 +114,8 @@ class DraftPage:
         self.selectable = {}    # {id: what the side panel shows when it's clicked}
         self.prop_panel = DiffPanel(view.drafted, "P")
         self.cur_panel = DiffPanel(view.current, "C")
+        self.prop_whole = DiffPanel(view.drafted_whole, "PW", like=self.prop_panel)
+        self.cur_whole = DiffPanel(view.current_whole, "CW", like=self.cur_panel)
         self.node_ids = {}
 
     # ---------- diagram ----------
@@ -290,6 +312,7 @@ class DraftPage:
             summary=items(summary), current=items(current), warn=warn,
             offstage=f"<div class='off'>Your uncommitted change also touches: {offstage}</div>" if offstage else "",
             prop_diff=self.prop_panel.html(), cur_diff=self.cur_panel.html(),
+            prop_whole=self.prop_whole.html(), cur_whole=self.cur_whole.html(),
             dot=json.dumps(dot), data=data, stamp=self.stamp, ghosts_more=more,
             diags=f"<details><summary>Parser warnings ({len(v.diagnostics)})</summary><ul>{diags}</ul></details>" if diags else "",
             scope_note=f"{len(v.scope)} classes in scope: {len(v.read_classes)} read by Claude, "
@@ -324,7 +347,10 @@ button {{ font-size:12px; color:{p.TEXT}; background:{p.RAISED}; border:1px soli
 .tabs button {{ border:none; background:transparent; padding:6px 12px; cursor:pointer; color:{p.DIM}; }}
 .tabs button.on {{ background:{p.BG}; color:{p.TEXT}; border-bottom:2px solid {p.LINK}; }}
 .panel {{ flex:1; overflow:auto; display:none; padding:6px; }} .panel.on {{ display:block; }}
-.file {{ margin-bottom:12px; }} .fname {{ font-weight:600; padding:3px 4px; background:{p.RAISED}; }}
+.file {{ margin-bottom:12px; }} .fname {{ font-weight:600; padding:3px 4px; background:{p.RAISED}; cursor:pointer; }}
+.fname .rows {{ font-weight:normal; color:{p.DIM}; }}
+.whole-diff {{ display:none; }} body.whole .whole-diff {{ display:block; }} body.whole .diff {{ display:none; }}
+.tabs label {{ float:right; padding:6px 10px; color:{p.DIM}; font-size:12px; cursor:pointer; }}
 table {{ border-collapse:collapse; width:100%; font:11.5px Menlo, monospace; }}
 td.ln {{ color:{p.FAINT}; text-align:right; padding:0 4px; width:1%; white-space:nowrap; user-select:none; }}
 td.src {{ white-space:pre; }}
@@ -343,9 +369,9 @@ pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow
 <main>
  <div id="diagram"><div id="zoom"><button onclick="zoomBy(1 / ZOOM_STEP)" title="Zoom out">−</button><span id="zoomed"></span><button onclick="zoomBy(ZOOM_STEP)" title="Zoom in">+</button><button onclick="zoomFit()">fit</button><button onclick="zoomTo(1)">100%</button><button id="full" onclick="setFull(!diagram.classList.contains('full'))">full screen</button><span class="hint">pinch or ⌘-scroll to zoom, drag to move</span></div><div id="svg">Drawing…</div></div>
  <div id="side">
-  <div class="tabs"><button data-t="prop" class="on">The draft</button><button data-t="cur">Your uncommitted change</button><button data-t="code">Code</button></div>
-  <div id="prop" class="panel on">{prop_diff}</div>
-  <div id="cur" class="panel">{cur_diff}</div>
+  <div class="tabs"><button data-t="prop" class="on">The draft</button><button data-t="cur">Your uncommitted change</button><button data-t="code">Code</button><label><input type="checkbox" id="whole"> whole functions</label></div>
+  <div id="prop" class="panel on"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
+  <div id="cur" class="panel"><div class="diff">{cur_diff}</div><div class="whole-diff">{cur_whole}</div></div>
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
  </div>
 </main>
@@ -432,11 +458,23 @@ function restoreView() {{
   diagram.scrollTop = v.top;
 }}
 function esc(s) {{ return s.replace(/[&<>]/g, c => ({{'&':'&amp;','<':'&lt;','>':'&gt;'}})[c]); }}
+// "Whole functions" swaps each diff for its --function-context version, kept in step on reload.
+const wholeBox = document.getElementById('whole');
+function setWhole(on) {{
+  document.body.classList.toggle('whole', on);
+  try {{ sessionStorage.setItem('whole', on ? '1' : ''); }} catch (e) {{}}
+}}
+wholeBox.onchange = () => setWhole(wholeBox.checked);
+try {{ wholeBox.checked = !!sessionStorage.getItem('whole'); }} catch (e) {{}}
+setWhole(wholeBox.checked);
 function jump(id, t) {{
   tab(t);
   document.querySelectorAll('tr.hit').forEach(r => r.classList.remove('hit'));
-  const row = document.getElementById(id);
-  if (row) {{ row.classList.add('hit'); row.scrollIntoView({{block:'center'}}); }}
+  const row = document.getElementById(wholeBox.checked ? id.replace(/^([PC])-/, '$1W-') : id);
+  if (!row) return;
+  row.closest('details').open = true;
+  row.classList.add('hit');
+  row.scrollIntoView({{block:'center'}});
 }}
 function select(sid) {{
   const s = SEL[sid];
