@@ -115,21 +115,35 @@ class DraftView:
             return 0 if any(n in self.drawn(s).bases or n in self.drawn(s).owns
                             for s in self.scope if self.drawn(s)) else 1 if c else 2
 
-        near = set()
+        near = {}       # {class in scope: its neighbours}
         for n in self.scope:
             c = self.drawn(n)
             # A class in scope only because Claude read part of it leads to the neighbours
             # of the parts read; a changed or added class, to all of its neighbours.
             partial = n not in self.changed_classes and n not in self.expanded
-            near |= c.related_via(self.reads) if partial else c.related()
+            near[n] = c.related_via(self.reads) if partial else c.related()
         whole = self.scope - (self.read_classes - self.changed_classes - self.expanded)
         for n in names - self.scope:      # classes that use a changed or added class
-            if self.drawn(n).related() & whole:
-                near.add(n)
-        near -= self.scope
-        near &= names
-        self.ghosts = sorted(near, key=lambda n: (weight(n), n))[:MAX_GHOSTS]
-        self.hidden_ghosts = max(0, len(near) - MAX_GHOSTS)
+            for used in self.drawn(n).related() & whole:
+                near[used].add(n)
+        candidates = (set().union(*near.values()) - self.scope) & names
+
+        # Ghosts are taken from each class's neighbours in turn, its bases first, so one
+        # class with many neighbours can't fill every place. Changed classes choose first.
+        def turn(n):
+            return (n not in self.changed_classes, n not in self.expanded, n)
+
+        queues = [sorted(near[n] & candidates, key=lambda g: (g not in self.drawn(n).bases, weight(g), g))
+                  for n in sorted(self.scope, key=turn)]
+        chosen = []
+        while len(chosen) < MAX_GHOSTS and any(queues):
+            for q in queues:
+                while q and q[0] in chosen:
+                    q.pop(0)
+                if q and len(chosen) < MAX_GHOSTS:
+                    chosen.append(q.pop(0))
+        self.ghosts = sorted(chosen, key=lambda n: (weight(n), n))
+        self.hidden_ghosts = len(candidates) - len(chosen)
         # Classes the user's own diff changed that aren't in view: offered, not drawn.
         self.offstage = sorted(set(self.current_diff.classes) - self.scope - set(self.ghosts))
 

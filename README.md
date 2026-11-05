@@ -68,7 +68,9 @@ age and whether its server is running.
 - **What either diff changes.**
 - **What you add.** Ghosts (dashed grey boxes) are classes one relation away. Click one to
   add it. For a class Claude only partly read, the ghosts are the neighbours of the members
-  it read, not of the whole class. Additions are stored in the draft's `scope.json`, and
+  it read, not of the whole class. There are at most 24 ghosts, taken from each class in
+  scope in turn (its bases first, changed classes choosing first), so one class with many
+  neighbours can't fill every place. Additions are stored in the draft's `scope.json`, and
   `draft scope` lists them as not yet read, so Claude reads them before revising. That
   keeps Claude's understanding in step with the diagram, not just the picture.
 - Classes your own diff changed outside the scope are offered as chips in the header.
