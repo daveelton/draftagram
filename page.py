@@ -111,8 +111,9 @@ class DiffPanel:
         out = []
         for f in self.patch.files:
             i = self.index[f.path]
-            label = f.path if f.old_path == f.new_path else \
-                f"{f.old_path or '(new)'} → {f.new_path or '(deleted)'}"
+            folder, _, name = f.path.rpartition("/")
+            label = (f'<span class="dir">{esc(folder + "/") if folder else ""}</span><span class="name">{esc(name)}</span>'
+                     if f.old_path == f.new_path else esc(f"{f.old_path or '(new)'} → {f.new_path or '(deleted)'}"))
             rows = sum(len(r) for _, r in f.hunks)
             size = f' <span class="rows">{rows} lines, folded</span>' if f.path in self.folded else ""
             state = "" if f.path in self.folded else " open"
@@ -123,7 +124,7 @@ class DiffPanel:
             role = f'<span class="role">{esc(about["role"])}</span>' if about.get("role") else ""
             note = f'<div class="file-note">{note_html(about["note"])}</div>' if about.get("note") else ""
             line_notes = self.notes.line_notes(f.path) if self.describes else {}
-            out.append(f'<details class="file"{state}><summary class="fname">{esc(label)}{chip}{role}{size}</summary>'
+            out.append(f'<details class="file"{state}><summary class="fname">{label}{chip}{role}{size}</summary>'
                        f'{note}<table>')
             for header, rows in f.hunks:
                 out.append(f'<tr class="hunk"><td></td><td></td><td>{esc(header)}</td></tr>')
@@ -535,6 +536,7 @@ button {{ font-size:12px; color:{p.TEXT}; background:{p.RAISED}; border:1px soli
 .panel {{ flex:1; overflow:auto; display:none; padding:6px; }} .panel.on {{ display:block; }}
 .file {{ margin-bottom:12px; }} .fname {{ font-weight:600; padding:3px 4px; background:{p.RAISED}; cursor:pointer; }}
 .fname .rows {{ font-weight:normal; color:{p.DIM}; }}
+.fname .dir {{ font-weight:normal; color:{p.DIM}; }} .fname .name {{ font-size:14px; }}   /* the name is what you scan for */
 .whole-diff {{ display:none; }} body.whole .whole-diff {{ display:block; }} body.whole .diff {{ display:none; }}
 .tabs label {{ float:right; padding:6px 10px; color:{p.DIM}; font-size:12px; cursor:pointer; }}
 table {{ border-collapse:collapse; width:100%; font:11.5px Menlo, monospace; }}
