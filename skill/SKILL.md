@@ -31,13 +31,18 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
 3. **Make the change only inside that worktree.** Never edit the checkout while a draft
    is open. The worktree has no build folder. Leave building until the change is accepted,
    unless the user asks for a build check.
-4. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
+4. **Write notes for the page** and store them with `draft notes <name> --file <json>`
+   (`draft notes --format` shows what they hold). The diagram and diffs show what changed;
+   the notes say why, in plain words: the problem in a sentence or two, what the draft does
+   about it, the processes involved, and a line on each file. Keep them short, and update them
+   when the draft changes. `draft scope` lists changed files that have no note yet.
+5. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
    you edit. Tell the user it's open, and give them the change in two or three product-level
    sentences. The page carries the detail.
-5. **Before you reply to any feedback, run `draft scope <name>`.** If it lists classes
+6. **Before you reply to any feedback, run `draft scope <name>`.** If it lists classes
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them
    (with line ranges) before revising, then revise in the worktree. The page follows.
-6. **Finish when the user decides:**
+7. **Finish when the user decides:**
    - `draft accept <name>` applies the change to the checkout as uncommitted edits and
      removes the worktree. Build it if the project has a build, and report the result. Don't
      commit unless asked.

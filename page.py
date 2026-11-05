@@ -3,11 +3,14 @@ code diffs, linked both ways: clicking a class or member shows its diff and code
 
 Colours (dark theme, all in Palette): green added, red removed (struck through), amber
 changed, by the draft. Blue marks what the user's own uncommitted diff changed. Grey text is a member Claude didn't read;
-a dashed grey box is a ghost, one relation outside the scope.
+a dashed grey box is a ghost, one relation outside the scope. Violet is anything Claude wrote
+(notes.py): the overview, file and line notes, and links the code can't show. Each process in
+the notes has its own colour, for its group on the diagram and its files.
 """
 import html
 import json
 import os
+import re
 
 from api_diff import ADDED, CHANGED, REMOVED
 from api_model import ACCESS
@@ -23,6 +26,8 @@ class Palette:
     EDGE_ADDED, EDGE_REMOVED = "#3fbf5f", "#e05555"
     DIFF_ADD, DIFF_DEL, HUNK_BG, HUNK_TEXT = "#1d3a26", "#432326", "#23293a", "#7f9cd6"
     WARN_BG = "#3d2f17"
+    NOTE, NOTE_BG = "#a594f9", "#2a2640"
+    PROCESSES = ["#3fb8af", "#e06c9f", "#c8a165", "#8fa3b8", "#b5b35c"]
 
 
 P = Palette
@@ -43,6 +48,20 @@ def esc(s):
     return html.escape(s, quote=True)
 
 
+def note_html(text):
+    """Claude's note text as HTML: escaped, with `backticks` as code."""
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", esc(str(text)))
+
+
+def process_colour(index):
+    return P.PROCESSES[index % len(P.PROCESSES)]
+
+
+def rgba(colour, alpha):
+    n = int(colour[1:], 16)
+    return f"rgba({n >> 16}, {(n >> 8) & 255}, {n & 255}, {alpha})"
+
+
 class DiffPanel:
     """One diff rendered as HTML rows, with an anchor per line so the diagram can jump to it.
 
@@ -50,9 +69,12 @@ class DiffPanel:
     it shares the first's file numbers and folding, so an anchor in one is found in the other
     by its prefix alone (P-3-n12 and PW-3-n12)."""
 
-    def __init__(self, patch, prefix, like=None):
+    def __init__(self, patch, prefix, notes, describes, like=None):
+        """`describes` is True for the draft's diffs, which Claude's file and line notes are about."""
         self.patch = patch
         self.prefix = prefix
+        self.notes = notes
+        self.describes = describes
         if like:
             self.index, self.folded = like.index, like.folded
             return
@@ -93,7 +115,15 @@ class DiffPanel:
             rows = sum(len(r) for _, r in f.hunks)
             size = f' <span class="rows">{rows} lines, folded</span>' if f.path in self.folded else ""
             state = "" if f.path in self.folded else " open"
-            out.append(f'<details class="file"{state}><summary class="fname">{esc(label)}{size}</summary><table>')
+            proc = self.notes.process_of(f.path)
+            chip = (f'<span class="proc" style="color:{process_colour(proc)}">'
+                    f'{esc(self.notes.processes[proc]["name"])}</span>') if proc >= 0 else ""
+            about = self.notes.file_note(f.path) if self.describes else {}
+            role = f'<span class="role">{esc(about["role"])}</span>' if about.get("role") else ""
+            note = f'<div class="file-note">{note_html(about["note"])}</div>' if about.get("note") else ""
+            line_notes = self.notes.line_notes(f.path) if self.describes else {}
+            out.append(f'<details class="file"{state}><summary class="fname">{esc(label)}{chip}{role}{size}</summary>'
+                       f'{note}<table>')
             for header, rows in f.hunks:
                 out.append(f'<tr class="hunk"><td></td><td></td><td>{esc(header)}</td></tr>')
                 for kind, o, n, text in rows:
@@ -103,6 +133,9 @@ class DiffPanel:
                     nn = "" if kind == "-" else n
                     out.append(f'<tr class="{cls}" id="{rid}"><td class="ln">{on}</td>'
                                f'<td class="ln">{nn}</td><td class="src">{kind}{esc(text)}</td></tr>')
+                    for line_note in line_notes.get(n, []) if kind != "-" else []:
+                        out.append(f'<tr class="note"><td></td><td></td><td><div class="line-note">'
+                                   f'{note_html(line_note)}</div></td></tr>')
             out.append("</table></details>")
         return "\n".join(out)
 
@@ -112,10 +145,11 @@ class DraftPage:
         self.v = view
         self.stamp = stamp
         self.selectable = {}    # {id: what the side panel shows when it's clicked}
-        self.prop_panel = DiffPanel(view.drafted, "P")
-        self.cur_panel = DiffPanel(view.current, "C")
-        self.prop_whole = DiffPanel(view.drafted_whole, "PW", like=self.prop_panel)
-        self.cur_whole = DiffPanel(view.current_whole, "CW", like=self.cur_panel)
+        self.notes = view.p.notes
+        self.prop_panel = DiffPanel(view.drafted, "P", self.notes, True)
+        self.cur_panel = DiffPanel(view.current, "C", self.notes, False)
+        self.prop_whole = DiffPanel(view.drafted_whole, "PW", self.notes, True, like=self.prop_panel)
+        self.cur_whole = DiffPanel(view.current_whole, "CW", self.notes, False, like=self.cur_panel)
         self.node_ids = {}
 
     # ---------- diagram ----------
@@ -245,15 +279,33 @@ class DraftPage:
                  'bgcolor="transparent";',
                  f'node [shape=plaintext, fontname="Helvetica", fontsize=11, fontcolor="{P.TEXT}"];',
                  f'edge [fontname="Helvetica", fontsize=9, color="{P.EDGE}"];']
+        groups = {}     # {process index, or -1 for none: node lines}
+
+        def add(name, line):
+            path = os.path.relpath(v.drawn(name).file, v.root)
+            groups.setdefault(self.notes.process_of(path), []).append(line)
+
         for name in sorted(v.scope):
-            lines.append(f'{self._node(name)} [label={self._class_label(name)}];')
+            add(name, f'{self._node(name)} [label={self._class_label(name)}];')
         for name in v.ghosts:
             c = v.drawn(name)
             where = f"{os.path.relpath(c.file, v.root)}:{c.lines[0]}"
-            lines.append(f'{self._node(name)} [shape=box, style="dashed,rounded,filled", '
-                         f'fillcolor="{P.GHOST_FILL}", color="{P.GHOST_LINE}", fontcolor="{P.DIM}", '
-                         f'label="{esc(name)}", tooltip="Add {esc(name)} ({esc(where)}) to the diagram", '
-                         f'href="#expand:{esc(name)}"];')
+            add(name, f'{self._node(name)} [shape=box, style="dashed,rounded,filled", '
+                      f'fillcolor="{P.GHOST_FILL}", color="{P.GHOST_LINE}", fontcolor="{P.DIM}", '
+                      f'label="{esc(name)}", tooltip="Add {esc(name)} ({esc(where)}) to the diagram", '
+                      f'href="#expand:{esc(name)}"];')
+        # Each process in Claude's notes is a box round its classes, in the process's colour.
+        # Graphviz reads alpha only as #RRGGBBAA, not rgba().
+        for index, group in sorted(groups.items()):
+            if index < 0:
+                lines += group
+                continue
+            colour = process_colour(index)
+            lines += [f"subgraph cluster_p{index} {{",
+                      f'label=<<B>{esc(self.notes.processes[index]["name"])}</B>>; labeljust="l"; '
+                      f'fontname="Helvetica"; fontsize=12; fontcolor="{colour}"; color="{colour}"; '
+                      f'style="rounded,filled"; fillcolor="{colour}14"; penwidth=1.2; margin=14;',
+                      *group, "}"]
         drawn = set(v.scope) | set(v.ghosts)
         for name in sorted(v.scope | set(v.ghosts)):
             new = v.prop.classes.get(name)
@@ -267,6 +319,12 @@ class DraftPage:
                     lines.append(self._edge(name, other, kind,
                                             ADDED if other not in was else
                                             REMOVED if other not in now else None))
+        for link in self.notes.get("links", []):    # connections the code can't show
+            a, b = link.get("from"), link.get("to")
+            if a in drawn and b in drawn:
+                lines.append(f'{self._node(a)} -> {self._node(b)} [color="{P.NOTE}", fontcolor="{P.NOTE}", '
+                             f'style=dashed, penwidth=1.6, arrowhead=vee, '
+                             f'label="  {esc(link.get("label", ""))}  "];')
         lines.append("}")
         return "\n".join(lines)
 
@@ -283,6 +341,51 @@ class DraftPage:
         elif status == REMOVED:
             style += f', color="{P.EDGE_REMOVED}", penwidth=2, style=dashed'
         return f"{src} -> {dst} [{style}];"
+
+    # ---------- Claude's notes ----------
+
+    def _overview(self):
+        """The Overview tab: what the draft is for, in Claude's words, then how it does it."""
+        n = self.notes
+        if not n:
+            return ('<p class="empty">No notes from Claude yet. Everything else on the page is read '
+                    'from the code; Claude adds what the draft fixes or builds with <code>draft notes</code>.</p>')
+        out = []
+        if n.get("problem"):
+            out.append(f'<div class="problem"><div class="label">{"What is needed" if n.is_feature else "The problem"}'
+                       f'</div><p>{note_html(n.get("problem"))}</p></div>')
+        if n.get("summary"):
+            out.append(f'<div class="label">{"How the draft does it" if n.is_feature else "How the draft fixes it"}</div>'
+                       '<ul class="notes">' + "".join(f"<li>{note_html(i)}</li>" for i in n.get("summary")) + "</ul>")
+        if n.get("behaviour"):
+            rows = "".join(f'<tr><td>{note_html(b.get("case", ""))}</td><td class="before">{note_html(b.get("before", ""))}</td>'
+                           f'<td class="after">{note_html(b.get("after", ""))}</td></tr>' for b in n.get("behaviour"))
+            out.append('<div class="label">Before and after</div><table class="behaviour">'
+                       f'<tr><th>Situation</th><th>Before</th><th>After</th></tr>{rows}</table>')
+        if n.get("sequence"):
+            out.append('<div class="label">What happens at run time</div><div id="sequence">Drawing…</div>')
+        return "\n".join(out)
+
+    def _sequence(self):
+        """The sequence diagram's source, each `box <process>` group tinted in its process's colour."""
+        def tint(m):
+            names = [p["name"] for p in self.notes.processes]
+            if m.group(2) not in names:
+                return m.group(0)
+            return f"{m.group(1)}box {rgba(process_colour(names.index(m.group(2))), 0.16)} {m.group(2)}"
+        return re.sub(r"(?m)^(\s*)box\s+(.+?)\s*$", tint, self.notes.get("sequence", ""))
+
+    def _key(self):
+        """The colour key's entries for Claude's notes and its processes."""
+        if not self.notes:
+            return ""
+        def where(p):
+            return ", ".join(p.get("paths", [])) or p.get("note", "not in this project")
+        procs = "".join(f'<span style="color:{process_colour(i)}; border-color:{process_colour(i)}" '
+                        f'title="{esc(where(p))}">{esc(p["name"])}</span>'
+                        for i, p in enumerate(self.notes.processes))
+        return (f'<span class="notes-key">written by Claude, not read from the code</span>'
+                + (f'<span class="sep">processes:</span>{procs}' if procs else ""))
 
     # ---------- page ----------
 
@@ -307,7 +410,11 @@ class DraftPage:
         diags = "".join(f"<li>{esc(d)}</li>" for d in v.diagnostics)
         more = f" (+{v.hidden_ghosts} more not shown)" if v.hidden_ghosts else ""
         data = json.dumps(self.selectable)
+        sequence = self._sequence()
         return PAGE.format(p=P,
+            overview=self._overview(), key=self._key(), first_tab="overview" if self.notes else "prop",
+            sequence=json.dumps(sequence or None),
+            mermaid='<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>' if sequence else "",
             name=esc(meta["name"]), headline=esc(meta.get("summary") or ""),
             summary=items(summary), current=items(current), warn=warn,
             offstage=f"<div class='off'>Your uncommitted change also touches: {offstage}</div>" if offstage else "",
@@ -358,10 +465,26 @@ tr.add {{ background:{p.DIFF_ADD}; }} tr.del {{ background:{p.DIFF_DEL}; }} tr.h
 tr.hit {{ outline:2px solid {p.LINK}; }}
 pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow:auto; }}
 .empty {{ color:{p.FAINT}; }}
+.legend .sep {{ border:none; color:{p.DIM}; padding-left:10px; }}
+.legend .notes-key {{ color:{p.NOTE}; border-color:{p.NOTE}; background:{p.NOTE_BG}; }}
+#overview {{ padding:10px 14px; font-size:13.5px; line-height:1.45; }}
+.label {{ font-size:11px; text-transform:uppercase; letter-spacing:.06em; color:{p.NOTE}; font-weight:600; margin:14px 0 4px; }}
+.problem {{ border-left:3px solid {p.NOTE}; padding:0 0 0 12px; }} .problem .label {{ margin-top:0; }}
+.problem p {{ margin:2px 0 0; font-size:14.5px; }}
+ul.notes {{ margin:2px 0; padding-left:20px; }} ul.notes li {{ margin:3px 0; }}
+table.behaviour {{ font:12.5px -apple-system, Helvetica, sans-serif; }}
+table.behaviour th, table.behaviour td {{ text-align:left; vertical-align:top; padding:4px 8px; border-bottom:1px solid {p.BORDER}; }}
+table.behaviour th {{ color:{p.DIM}; font-weight:600; }} td.before {{ color:{p.DIM}; }}
+code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; border-radius:3px; }}
+#sequence svg {{ max-width:100%; height:auto; }}
+.proc {{ font-size:11px; margin-left:10px; }}
+.role {{ font-weight:normal; font-size:10.5px; color:{p.DIM}; margin-left:8px; text-transform:uppercase; letter-spacing:.04em; }}
+.file-note {{ background:{p.NOTE_BG}; border-left:3px solid {p.NOTE}; padding:5px 10px; margin:4px 0 6px; font-size:12.5px; line-height:1.4; }}
+.line-note {{ background:{p.NOTE_BG}; border-left:3px solid {p.NOTE}; padding:3px 8px; margin:2px 0 4px; font:12px -apple-system, Helvetica, sans-serif; white-space:normal; }}
 </style></head><body>
 <header>
  <h1>Draft: {name} <span style="font-weight:normal">{headline}</span></h1>
- <div class="legend"><span style="background:{p.ADDED}">draft adds</span><span style="background:{p.CHANGED}">changes</span><span style="background:{p.REMOVED}"><s>removes</s></span><span style="background:{p.CURRENT}">your uncommitted change</span><span style="color:{p.UNREAD_TEXT}">not read by Claude</span><span style="border-style:dashed;color:{p.DIM}">ghost: click to add</span></div>
+ <div class="legend"><span style="background:{p.ADDED}">draft adds</span><span style="background:{p.CHANGED}">changes</span><span style="background:{p.REMOVED}"><s>removes</s></span><span style="background:{p.CURRENT}">your uncommitted change</span><span style="color:{p.UNREAD_TEXT}">not read by Claude</span><span style="border-style:dashed;color:{p.DIM}">ghost: click to add</span>{key}</div>
  <div class="cols"><div><b>API changes in the draft</b><ul>{summary}</ul></div><div><b>Your uncommitted API changes</b><ul>{current}</ul></div></div>
  <div style="color:{p.DIM}">{scope_note}</div>
  {warn}{offstage}{diags}
@@ -369,23 +492,40 @@ pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow
 <main>
  <div id="diagram"><div id="zoom"><button onclick="zoomBy(1 / ZOOM_STEP)" title="Zoom out">−</button><span id="zoomed"></span><button onclick="zoomBy(ZOOM_STEP)" title="Zoom in">+</button><button onclick="zoomFit()">fit</button><button onclick="zoomTo(1)">100%</button><button id="full" onclick="setFull(!diagram.classList.contains('full'))">full screen</button><span class="hint">pinch or ⌘-scroll to zoom, drag to move</span></div><div id="svg">Drawing…</div></div>
  <div id="side">
-  <div class="tabs"><button data-t="prop" class="on">The draft</button><button data-t="cur">Your uncommitted change</button><button data-t="code">Code</button><label><input type="checkbox" id="whole"> whole functions</label></div>
-  <div id="prop" class="panel on"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
+  <div class="tabs"><button data-t="overview">Overview</button><button data-t="prop">The draft</button><button data-t="cur">Your uncommitted change</button><button data-t="code">Code</button><label><input type="checkbox" id="whole"> whole functions</label></div>
+  <div id="overview" class="panel">{overview}</div>
+  <div id="prop" class="panel"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
   <div id="cur" class="panel"><div class="diff">{cur_diff}</div><div class="whole-diff">{cur_whole}</div></div>
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
  </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
+{mermaid}
 <script>
 const DOT = {dot};
+const SEQUENCE = {sequence};
 const SEL = {data};
 const STAMP = "{stamp}";
 let scale = 1, svg = null, dragged = false;
+// The open tab is kept across the reloads the draft's changes cause.
 function tab(t) {{
   document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.t === t));
   document.querySelectorAll('.panel').forEach(p => p.classList.toggle('on', p.id === t));
+  try {{ sessionStorage.setItem('tab', t); }} catch (e) {{}}
+  drawSequence();
 }}
 document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => tab(b.dataset.t));
+// Mermaid measures text as it draws, so the sequence diagram is drawn once its tab is showing.
+let sequenceDrawn = false;
+async function drawSequence() {{
+  const box = document.getElementById('sequence');
+  if (sequenceDrawn || !SEQUENCE || !box || !box.offsetParent) return;
+  sequenceDrawn = true;
+  if (!window.mermaid) {{ box.textContent = SEQUENCE; return; }}
+  mermaid.initialize({{startOnLoad: false, theme: 'dark', securityLevel: 'strict'}});
+  try {{ box.innerHTML = (await mermaid.render('sequence-svg', SEQUENCE)).svg; }}
+  catch (e) {{ box.textContent = 'Sequence diagram failed: ' + e.message; }}
+}}
 // The diagram zooms and pans inside its own panel. The SVG's size is set from the zoom (not
 // a CSS transform), so the panel's scrollbars and trackpad scrolling keep working.
 const ZOOM_MIN = 0.2, ZOOM_MAX = 3, ZOOM_STEP = 1.25;
@@ -503,6 +643,9 @@ function onLink(e) {{
   if (kind === 'expand') post('/expand', {{name: arg}});
   if (kind === 'full') post('/full', {{name: arg}});
 }}
+let savedTab = null;
+try {{ savedTab = sessionStorage.getItem('tab'); }} catch (e) {{}}
+tab(savedTab && document.getElementById(savedTab) ? savedTab : '{first_tab}');
 Viz.instance().then(viz => {{
   svg = viz.renderSVGElement(DOT);
   const host = document.getElementById('svg'); host.innerHTML = ''; host.appendChild(svg);

@@ -8,6 +8,7 @@
     draft start NAME [--summary TEXT]   worktree for the draft, from your checkout as it is
     draft show [NAME]                   open the live page (diagram + diffs) in the browser
     draft scope [NAME]                  what's in the diagram, as text (for Claude)
+    draft notes [NAME] --file FILE      Claude's notes for the page (--format: what they hold)
     draft render [NAME] [--out FILE]    write the page once, without the live server
     draft accept [NAME]                 apply the draft to your checkout, uncommitted
     draft drop [NAME]                   throw the draft away
@@ -28,6 +29,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 
+from notes import FORMAT, Notes   # noqa: E402
 from page import DraftPage      # noqa: E402
 from draft_tree import Draft      # noqa: E402
 from view import DraftView, UnitCache   # noqa: E402
@@ -158,6 +160,10 @@ class DraftCli:
         s.add_argument("--session", default=os.environ.get("CLAUDE_CODE_SESSION_ID"))
         for cmd in ("show", "scope", "accept", "drop", "serve"):
             sub.add_parser(cmd).add_argument("name", nargs="?")
+        n = sub.add_parser("notes")
+        n.add_argument("name", nargs="?")
+        n.add_argument("--file")
+        n.add_argument("--format", action="store_true")
         r = sub.add_parser("render")
         r.add_argument("name", nargs="?")
         r.add_argument("--out")
@@ -191,6 +197,23 @@ class DraftCli:
         open(out, "w").write(html)
         print(out)
 
+    def cmd_notes(self, a):
+        if a.format:
+            print(FORMAT.strip())
+            return
+        if not a.file:
+            raise SystemExit("give --file FILE, or --format to see what notes hold")
+        p = Draft.find(self.root, a.name)
+        try:
+            data = json.load(open(a.file))
+        except (OSError, ValueError) as e:
+            raise SystemExit(f"can't read {a.file}: {e}")
+        problems = Notes.problems(data)
+        if problems:
+            raise SystemExit("notes not saved:\n  " + "\n  ".join(problems))
+        p.set_notes(data)
+        print(f"Notes saved for '{p.name}'; an open page redraws with them.")
+
     def cmd_scope(self, a):
         p = Draft.find(self.root, a.name)
         v = DraftView(p).build()
@@ -216,6 +239,12 @@ class DraftCli:
             print("draft:", line)
         for d in v.diagnostics:
             print("parser:", d)
+        if not p.notes:
+            print("notes: none yet (draft notes --format)")
+        else:
+            missing = p.notes.unnoted(sorted(f.path for f in v.drafted.files))
+            if missing:
+                print("notes: no file note for " + ", ".join(missing))
 
     def cmd_accept(self, a):
         p = Draft.find(self.root, a.name)

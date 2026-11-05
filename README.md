@@ -56,6 +56,13 @@ the project's `.gitignore` if it isn't there.
   8 lines around each change, and "whole functions" shows the whole function instead. A file
   with a long diff starts folded (over 600 lines, or over 150 when the whole diff is over 3000).
 - **Header.** A text summary of the API changes in each diff, and how the scope was chosen.
+- **Claude's notes**, in violet wherever they appear, since they are Claude's words and not
+  read from the code. The Overview tab opens with the problem the draft fixes (or what it
+  adds) in a sentence or two, then the bullets saying how the draft does it, a before/after
+  table and a sequence diagram. Each process the notes name gets its own colour, for a box
+  round its classes on the diagram and a label on its files. The draft's diffs carry a note on
+  each file and on lines that need one, and the diagram draws links the code can't show, such
+  as an HTTP call. Claude stores them with `draft notes`; without them the page is as before.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.
@@ -100,6 +107,8 @@ age and whether its server is running.
  DraftView (view.py)         scope, ghosts; UnitCache re-parses only the units whose included
                               files differ between states or redraws
         ▼
+ Notes (notes.py)            Claude's notes (JSON, `draft notes`): overview, processes,
+                              file and line notes, links
  DraftPage (page.py)         Graphviz DOT with HTML-table nodes, drawn in the browser by
                               viz.js (from a CDN); diffs rendered with a line anchor per row
  DraftServer (draft.py)      localhost page, /stamp for live reload, /expand and /full

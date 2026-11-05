@@ -14,6 +14,8 @@ import shutil
 import subprocess
 import time
 
+from notes import Notes
+
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
@@ -35,6 +37,7 @@ class Draft:
         self.branch = f"draft/{name}"
         self.meta_path = os.path.join(self.dir, "meta.json")
         self.scope_path = os.path.join(self.dir, "scope.json")
+        self.notes_path = os.path.join(self.dir, "notes.json")
 
     # ---------- finding drafts ----------
 
@@ -183,6 +186,15 @@ class Draft:
         """A worktree path as the same file in the checkout."""
         prefix = self.tree + os.sep
         return os.path.join(self.root, path[len(prefix):]) if path.startswith(prefix) else path
+
+    # ---------- Claude's notes ----------
+
+    @property
+    def notes(self):
+        return Notes.load(self.notes_path)
+
+    def set_notes(self, data):
+        json.dump(data, open(self.notes_path, "w"), indent=2)
 
     # ---------- what the user has added to the diagram ----------
     # scope.json: {"expanded": [{"name", "file"}], "full": [class names drawn with every member]}

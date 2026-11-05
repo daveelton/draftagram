@@ -7,6 +7,7 @@ plus classes the user expanded on the page. Classes one relation away from the s
 ghosts: drawn greyed, clickable to expand.
 """
 import hashlib
+import json
 import os
 import subprocess
 
@@ -54,6 +55,7 @@ class DraftView:
         h.update(self.p.draft_patch().encode())
         h.update(self.p.current_patch().encode())
         h.update(repr(self.p._scope()).encode())
+        h.update(json.dumps(self.p.notes.data, sort_keys=True).encode())
         for t in ReadLog(self.p.meta["session"]).transcripts():
             h.update(f"{t}:{os.path.getsize(t)}".encode())
         return h.hexdigest()[:16]
