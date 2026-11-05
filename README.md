@@ -76,7 +76,7 @@ age and whether its server is running.
 ## How it works
 
 ```
- Draft (draft.py)      worktree temp/draft/<name>/tree on branch draft/<name>:
+ Draft (draft_tree.py)       worktree temp/draft/<name>/tree on branch draft/<name>:
                               HEAD + a "snapshot" commit of your uncommitted changes,
                               then Claude's edits on top
         │ three states as file overrides: HEAD, working tree, draft
@@ -87,12 +87,12 @@ age and whether its server is running.
                               for every state
         ▼
  ApiDiff (api_diff.py)       per class and member: added / removed / changed
- DraftView (view.py)      scope, ghosts; UnitCache re-parses only the units whose included
+ DraftView (view.py)         scope, ghosts; UnitCache re-parses only the units whose included
                               files differ between states or redraws
         ▼
- DraftPage (page.py)      Graphviz DOT with HTML-table nodes, drawn in the browser by
+ DraftPage (page.py)         Graphviz DOT with HTML-table nodes, drawn in the browser by
                               viz.js (from a CDN); diffs rendered with a line anchor per row
- DraftServer (draft.py) localhost page, /stamp for live reload, /expand and /full
+ DraftServer (draft.py)      localhost page, /stamp for live reload, /expand and /full
 ```
 
 Parsing details that matter:
