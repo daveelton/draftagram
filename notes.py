@@ -21,7 +21,9 @@ FORMAT = """
   "lineNotes": [{"file": "path", "line": 123, "note": "..."}],
   "checks":    [{"id": "short-slug", "tag": "risk | tidy | question",
                  "title": "what could go wrong, in plain words, one line",
-                 "suggestion": "the fix Claude would make, one line",
+                 "suggestion": "what pressing Fix makes Claude change in the draft, as an action, one line",
+                 "recommend": "fix | leave, Claude's advice (optional)",
+                 "because": "why, one line (with recommend)",
                  "detail": "the code-level explanation (folded on the page)",
                  "file": "path", "line": 123}],
   "minorChecks": ["lesser points, shown folded", ...],
@@ -34,6 +36,10 @@ a process with no paths (a server elsewhere) appears only in the sequence diagra
 connections the code can't show, drawn on the diagram between classes that are in it.
 lineNotes[].line is a line in the draft's version of the file.
 checks are decisions for the user, answered Fix or Leave on the page: at most MAX_CHECKS.
+Fix means Claude makes the suggestion; Leave means the draft stays as it is. So suggestion
+is always a change Claude can make, never "keep it" or "leave as is": advice to leave it
+goes in recommend and because. A step only the user can take, such as a test on a machine
+Claude can't reach, isn't a check: say it in the summary, or ask in the chat.
 Things they only need to know go in behaviour, lesser points in minorChecks. Don't raise a
 check again that `draft scope` lists as left by the user.
 commits are the commits the page offers to make once the draft is accepted, one per separate
@@ -81,6 +87,29 @@ class Notes:
             out.append("each check needs its own id")
         if any(not isinstance(c, dict) or not c.get("title") for c in checks):
             out.append("each check needs a title")
+        for c in checks:
+            if isinstance(c, dict):
+                out += Notes._check_problems(c)
+        return out
+
+    # A suggestion that starts like this is advice to leave the draft as it is, so Fix would
+    # mean the same as Leave.
+    NOT_A_FIX = ("keep", "leave", "no change", "nothing", "do nothing", "don't change", "as is")
+
+    @staticmethod
+    def _check_problems(c):
+        name = c.get("id", "?")
+        out = []
+        suggestion = str(c.get("suggestion", "")).strip().lower()
+        if not suggestion:
+            out.append(f"check '{name}' needs a suggestion: the change Fix makes")
+        elif suggestion.startswith(Notes.NOT_A_FIX):
+            out.append(f"check '{name}': its suggestion reads as leaving it ('{c['suggestion'][:40]}...'). "
+                       "Make it the change Fix makes, and put the advice in recommend: \"leave\" with because")
+        if c.get("recommend") not in (None, "fix", "leave"):
+            out.append(f"check '{name}': recommend is \"fix\" or \"leave\"")
+        if c.get("recommend") and not c.get("because"):
+            out.append(f"check '{name}': say why in because")
         return out
 
     def __bool__(self):

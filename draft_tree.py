@@ -147,16 +147,33 @@ class Draft:
             return False, made, "\n".join(log)
         return True, made, "\n".join(log)
 
-    def save_outcome(self, outcome):
-        json.dump(outcome, open(self.outcome_path, "w"), indent=2)
+    # What happened when the page accepted the draft. The page server writes it twice: marked
+    # "accepting" before the draft is removed, so `draft answers --wait` never sees a draft
+    # gone with nothing said about it, then "done" once git has finished.
 
-    def take_outcome(self):
+    def save_outcome(self, outcome):
+        # Written by the page server and read by `draft answers`, in separate processes: write
+        # a whole new file and rename it over, so neither reads one half-written.
+        tmp = self.outcome_path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(outcome, f, indent=2)
+        os.replace(tmp, self.outcome_path)
+
+    def read_outcome(self):
         try:
-            outcome = json.load(open(self.outcome_path))
+            return json.load(open(self.outcome_path))
         except (OSError, ValueError):
             return None
-        os.remove(self.outcome_path)
+
+    def take_outcome(self):
+        outcome = self.read_outcome()
+        if outcome is not None:
+            os.remove(self.outcome_path)
         return outcome
+
+    def discard_outcome(self):
+        if os.path.exists(self.outcome_path):
+            os.remove(self.outcome_path)
 
     def drop(self):
         git(self.root, "worktree", "remove", "--force", self.tree, check=False)
@@ -275,18 +292,26 @@ class Draft:
             answers.pop(check_id, None)
         self._save_answers(data)
 
+    @staticmethod
+    def answer_round(checks, answers):
+        """Every check with the user's decision on it, as Claude is told them."""
+        out = []
+        for c in checks:
+            a = answers.get(c["id"]) or {}
+            out.append({"id": c["id"], "title": c.get("title", ""), "suggestion": c.get("suggestion", ""),
+                        "decision": a.get("decision", "not answered"), "note": a.get("note", "")})
+        return out
+
     def send_answers(self, checks, answers):
         """Hand this round's answers to Claude: every check with its decision, and the ones
         left remembered for later rounds."""
         data = self._answers()
         sent = data.setdefault("sent", [])
         left = data.setdefault("left", [])
-        for c in checks:
-            a = answers.get(c["id"]) or {}
-            sent.append({"id": c["id"], "title": c.get("title", ""), "suggestion": c.get("suggestion", ""),
-                         "decision": a.get("decision", "not answered"), "note": a.get("note", "")})
-            if a.get("decision") == "leave" and all(item["id"] != c["id"] for item in left):
-                left.append({"id": c["id"], "title": c.get("title", ""), "note": a.get("note", "")})
+        for item in self.answer_round(checks, answers):
+            sent.append(item)
+            if item["decision"] == "leave" and all(l["id"] != item["id"] for l in left):
+                left.append({"id": item["id"], "title": item["title"], "note": item["note"]})
         data["answers"] = {}
         self._save_answers(data)
 

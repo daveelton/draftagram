@@ -397,12 +397,18 @@ class DraftPage:
                          else f"<span>{text}</span>")
             detail = (f'<details><summary>Detail</summary><p>{note_html(c.get("detail", ""))}</p>{where}</details>'
                       if c.get("detail") or where else "")
-            suggestion = (f'<div class="suggest"><span>Suggest:</span> {note_html(c["suggestion"])}</div>'
+            suggestion = (f'<div class="suggest"><span>Fix will:</span> {note_html(c["suggestion"])}</div>'
                           if c.get("suggestion") else "")
+            advice = c.get("recommend")
+            if advice in ("fix", "leave"):
+                suggestion += (f'<div class="recommend"><span>Claude recommends</span> <b>{advice.capitalize()}</b>'
+                               f'{": " + note_html(c["because"]) if c.get("because") else ""}</div>')
+            buttons = "".join(f'<button data-d="{d}"{" class=recommended" if d == advice else ""}>{d.capitalize()}</button>'
+                              for d in ("fix", "leave"))
             cards.append(f'<div class="check" data-id="{esc(c["id"])}"><div class="check-head">'
                          f'<span class="tag">{esc(CHECK_TAGS.get(c.get("tag"), "Check"))}</span>'
                          f'<b>{note_html(c["title"])}</b></div>{suggestion}{detail}'
-                         f'<div class="check-actions"><button data-d="fix">Fix</button><button data-d="leave">Leave</button>'
+                         f'<div class="check-actions">{buttons}'
                          f'<input class="check-note" placeholder="Note (optional)"></div></div>')
         minor = n.get("minorChecks", [])
         left = v.p.left
@@ -567,7 +573,8 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
 .check.left {{ opacity:.55; }}
 .check-head {{ display:flex; gap:8px; align-items:baseline; }}
 .check .tag {{ font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:{p.NOTE}; border:1px solid {p.NOTE}; border-radius:3px; padding:0 4px; }}
-.check .suggest {{ margin-top:4px; }} .check .suggest span {{ color:{p.DIM}; }}
+.check .suggest, .check .recommend {{ margin-top:4px; }} .check .suggest span, .check .recommend span {{ color:{p.DIM}; }}
+.check-actions button.recommended {{ outline:1px dashed {p.NOTE}; outline-offset:1px; }}
 .check details {{ margin-top:4px; color:{p.DIM}; }} .check details p {{ margin:4px 0; color:{p.TEXT}; }}
 .check-actions {{ display:flex; gap:6px; margin-top:6px; align-items:center; }}
 .check-actions button {{ padding:2px 12px; cursor:pointer; }}
@@ -795,7 +802,10 @@ async function accept(commit, push) {{
   finished = true;
   showAnswers();
   statusLine.textContent = commit ? (push ? 'Accepting, committing and pushing…' : 'Accepting and committing…') : 'Accepting…';
-  const r = await send('/accept', {{stamp: STAMP, commit, push, commits: readCommits()}}).catch(e => null);
+  // The answers go with the accept: Claude is told them with the outcome, since all-Leave
+  // answers accept without being sent first.
+  CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
+  const r = await send('/accept', {{stamp: STAMP, commit, push, commits: readCommits(), answers}}).catch(e => null);
   const reply = r ? await r.json().catch(e => ({{ok: false, log: 'No reply from the page server.'}}))
                   : {{ok: false, log: 'The page server is not running.'}};
   finished = reply.ok || (r && r.status === 200);     // once accepted, the draft is gone whatever git did

@@ -64,8 +64,10 @@ the project's `.gitignore` if it isn't there.
   each file and on lines that need one, and the diagram draws links the code can't show, such
   as an HTTP call. Claude stores them with `draft notes`; without them the page is as before.
 - **Checks.** Up to five decisions Claude wants from you, as cards at the end of the Overview:
-  each says what could go wrong and the fix Claude suggests, with Fix and Leave buttons and an
-  optional note. Answers are saved as you click, so the page's reloads keep them. "Send fixes to
+  each says what could go wrong and what Fix will change, with Fix and Leave buttons and an
+  optional note. Fix always means Claude makes that change, and Leave that the draft stays as
+  it is. Where Claude would leave it, the card says "Claude recommends Leave" and why, and
+  outlines that button; `draft notes` refuses a suggestion that reads as leaving it. Answers are saved as you click, so the page's reloads keep them. "Send fixes to
   Claude" hands them over: `draft answers --wait`, which Claude runs in the background, prints
   them. Checks you leave are remembered for the draft, listed folded on later rounds, and
   Claude doesn't raise them again. The next round opens with what Claude changed for each fix.
@@ -81,9 +83,11 @@ the project's `.gitignore` if it isn't there.
   its files as they are after accepting, so your own uncommitted changes in those files go in
   too: the bar lists any such files. Push uses the branch's upstream, shown top right of the
   page. The page server runs git itself, with your credentials: Claude only suggests the
-  commits. What happened (the files accepted, the commits made, whether the push worked) is
-  written beside the draft's folder and reported to Claude by `draft answers --wait`, so it
-  can finish the work the commits leave, such as updating the ticket.
+  commits. What happened (the files accepted, the commits made, whether the push worked, and
+  your answers to the checks) is written beside the draft's folder and reported to Claude by
+  `draft answers --wait`, so it can finish the work the commits leave, such as updating the
+  ticket. The record is started, marked as accepting, before the draft is removed, so the wait
+  doesn't mistake an accept in progress for a draft that was dropped.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.

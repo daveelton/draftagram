@@ -37,7 +37,11 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    about it, the processes involved, and a line on each file. Keep them short, and update them
    when the draft changes. `draft scope` lists changed files that have no note yet.
    Add up to five `checks`: real decisions for the user (a risk, a question, something to
-   tidy), each with the fix you'd suggest. The user answers each Fix or Leave on the page.
+   tidy). The user answers each Fix or Leave on the page: Fix means you make the
+   `suggestion`, Leave means the draft stays as it is. So the suggestion is always a change
+   you will make, never "keep it as is". When you'd advise leaving it, still write the real
+   fix, and add `recommend: "leave"` with `because`. Something only the user can do, such
+   as a test on a machine you can't reach, isn't a check: say it in the summary or the chat.
    Don't raise one again that `draft scope` lists as left by the user. Add `commits`: one per
    separate piece of work, with a subject under 50 characters, a body wrapped at 72 saying why,
    and the files each takes. The page offers to commit them when the user accepts.

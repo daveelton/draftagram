@@ -111,13 +111,20 @@ class DraftServer:
                                              + ", ".join(stray)}
         if any(not c.get("subject", "").strip() or not c.get("files") for c in commits):
             return 400, {"ok": False, "log": "Every commit needs a subject and at least one file."}
+        # The answers go with the outcome: accepting removes the draft's folder, answers and
+        # notes included, and answers of all Leave accept without being sent first.
+        answers = {**self.p.answers, **(request.get("answers") or {})}
+        answered = self.p.answer_round(self.p.notes.checks, answers)
+        self.p.save_outcome({"state": "accepting", "answers": answered})
         try:
             files = self.p.accept()
         except SystemExit as e:     # Draft reports failures as SystemExit, for the command line
+            self.p.discard_outcome()
             return 409, {"ok": False, "log": str(e)}
         ok, made, log = self.p.commit(commits, request.get("push")) if commits else (True, [], "")
-        outcome = {"accepted": files, "commits": made, "pushed": ok and bool(commits and request.get("push")),
-                   "ok": ok, "log": log}
+        outcome = {"state": "done", "accepted": files, "commits": made,
+                   "pushed": ok and bool(commits and request.get("push")), "ok": ok, "log": log,
+                   "answers": answered}
         self.p.save_outcome(outcome)
         print(json.dumps(outcome, indent=2), flush=True)
         return 200, {"ok": ok, "log": log, "commits": made, "pushed": outcome["pushed"]}
@@ -287,10 +294,18 @@ class DraftCli:
         named = Draft(self.root, a.name) if a.name else None
         p = named if named and os.path.exists(named.outcome_path) else Draft.find(self.root, a.name)
         while True:
+            outcome = p.read_outcome()
+            if outcome and outcome.get("state") == "accepting":
+                # The page is accepting now: committing and pushing take a few seconds.
+                if not a.wait:
+                    print(f"The user is accepting '{p.name}' from the page; run this again to see the result.")
+                    return
+                time.sleep(WAIT_POLL_SECONDS)
+                continue
             if not p.exists():
                 outcome = p.take_outcome()
                 if not outcome:
-                    print(f"The draft '{p.name}' is gone: it was accepted or dropped.")
+                    print(f"The draft '{p.name}' is gone: it was dropped, or accepted with `draft accept`.")
                     return
                 print(f"The user accepted '{p.name}' from the page: " + ", ".join(outcome["accepted"]))
                 for c in outcome["commits"]:
@@ -299,6 +314,10 @@ class DraftCli:
                     print("  and pushed")
                 if not outcome["ok"]:
                     print("It stopped on a git failure:\n" + outcome["log"])
+                answered = [s for s in outcome.get("answers", []) if s["decision"] != "not answered"]
+                if answered:
+                    print("Their answers to your checks, given with the accept:")
+                    self._print_answers(answered)
                 return
             sent = p.take_sent()
             if sent:
@@ -311,13 +330,17 @@ class DraftCli:
                 return
             time.sleep(WAIT_POLL_SECONDS)
         print("The user's answers to your checks:")
-        for s in sent:
+        self._print_answers(sent)
+        print("Make the fixes in the worktree, then update the notes: a new set of checks if any, and "
+              "sinceLastReview saying what you changed for each fix. Don't raise the left ones again.")
+
+    @staticmethod
+    def _print_answers(answers):
+        for s in answers:
             note = f"  (note: {s['note']})" if s.get("note") else ""
             print(f"  {s['decision'].upper():13} {s['title']}{note}")
             if s["decision"] == "fix" and s.get("suggestion"):
                 print(f"  {'':13} you suggested: {s['suggestion']}")
-        print("Make the fixes in the worktree, then update the notes: a new set of checks if any, and "
-              "sinceLastReview saying what you changed for each fix. Don't raise the left ones again.")
 
     def cmd_scope(self, a):
         p = Draft.find(self.root, a.name)
