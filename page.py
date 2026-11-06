@@ -462,7 +462,7 @@ class DraftPage:
             return r.stdout.strip() if r.returncode == 0 else ""
         branch = git("rev-parse", "--abbrev-ref", "HEAD")
         upstream = git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
-        return f"{branch} → {upstream}" if upstream else f"{branch}, no upstream: push will fail"
+        return f"branch {branch} → {upstream}" if upstream else f"branch {branch}, no upstream: push will fail"
 
     # ---------- page ----------
 
@@ -514,6 +514,7 @@ body {{ margin:0; font:13px -apple-system, Helvetica, sans-serif; color:{p.TEXT}
 a {{ color:{p.LINK}; }}
 header {{ padding:8px 14px; border-bottom:1px solid {p.BORDER}; background:{p.PANEL}; }}
 header h1 {{ font-size:15px; margin:0 0 2px; }}
+header h1 .branch {{ float:right; font:12px Menlo, monospace; color:{p.TEXT}; border:1px solid {p.BORDER}; background:{p.RAISED}; padding:2px 8px; border-radius:3px; }}
 header .cols {{ display:flex; gap:28px; }}
 header ul {{ margin:2px 0; padding-left:18px; font-family:Menlo, monospace; font-size:11.5px; }}
 .legend span {{ display:inline-block; padding:1px 6px; margin-right:4px; border:1px solid {p.BORDER}; font-size:11px; }}
@@ -590,7 +591,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
 .line-note {{ background:{p.NOTE_BG}; border-left:3px solid {p.NOTE}; padding:3px 8px; margin:2px 0 4px; font:12px -apple-system, Helvetica, sans-serif; white-space:normal; }}
 </style></head><body>
 <header>
- <h1>Draft: {name} <span style="font-weight:normal">{headline}</span></h1>
+ <h1>Draft: {name} <span style="font-weight:normal">{headline}</span><span class="branch" title="Accepting commits to this branch and pushes to its upstream">{branch}</span></h1>
  <div class="legend"><span style="background:{p.ADDED}">draft adds</span><span style="background:{p.CHANGED}">changes</span><span style="background:{p.REMOVED}"><s>removes</s></span><span style="background:{p.CURRENT}">your uncommitted change</span><span style="color:{p.UNREAD_TEXT}">not read by Claude</span><span style="border-style:dashed;color:{p.DIM}">ghost: click to add</span>{key}</div>
  <div class="cols"><div><b>API changes in the draft</b><ul>{summary}</ul></div><div><b>Your uncommitted API changes</b><ul>{current}</ul></div></div>
  <div style="color:{p.DIM}">{scope_note}</div>
@@ -606,7 +607,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
   <div id="actions">{commit_bar}
    <div class="row"><button class="primary" id="send">Accept, commit, push</button><button id="commit">Accept and commit</button><button id="accept">Accept only</button><span class="status" id="status"></span></div>
-   <div class="row"><span class="status" id="answered"></span><span class="status">{branch}</span></div>
+   <div class="row"><span class="status" id="answered"></span></div>
    <pre id="log" hidden></pre>
   </div>
  </div>

@@ -70,14 +70,20 @@ the project's `.gitignore` if it isn't there.
   them. Checks you leave are remembered for the draft, listed folded on later rounds, and
   Claude doesn't raise them again. The next round opens with what Claude changed for each fix.
   Every POST to the page server carries a token that only the page it served knows, so another
-  web page in the browser can't post to it.
+  web page in the browser can't post to it. The server also answers only requests addressed to
+  `127.0.0.1` or `localhost` by its own port. Without that, a web page could point a host name
+  of its own at 127.0.0.1 (DNS rebinding), load this page with its token, and accept and push.
 - **Accepting from the page.** The bar under the side panel holds the commits Claude suggests
   (folded; each subject and message can be edited) and three buttons: "Accept, commit, push",
   "Accept and commit" and "Accept only". Asking for a fix replaces them with "Send fixes to
   Claude". Accepting is refused if the draft changed after the page was drawn, so what is
   accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
   its files as they are after accepting, so your own uncommitted changes in those files go in
-  too: the bar lists any such files. Push uses the branch's upstream, shown in the bar.
+  too: the bar lists any such files. Push uses the branch's upstream, shown top right of the
+  page. The page server runs git itself, with your credentials: Claude only suggests the
+  commits. What happened (the files accepted, the commits made, whether the push worked) is
+  written beside the draft's folder and reported to Claude by `draft answers --wait`, so it
+  can finish the work the commits leave, such as updating the ticket.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.
@@ -155,6 +161,8 @@ Parsing details that matter:
 - C++ only. Other files show in the diffs but not the diagram.
 - `accept` uses `git apply`. If the checkout has changed in the same lines since the draft
   started, accept refuses and says why. Rebase by dropping and starting again.
+
+Ideas not yet built, with their reasoning, are in `future-ideas.md`.
 
 ## Open: leftover drafts
 

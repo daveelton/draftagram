@@ -41,19 +41,36 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    Don't raise one again that `draft scope` lists as left by the user. Add `commits`: one per
    separate piece of work, with a subject under 50 characters, a body wrapped at 72 saying why,
    and the files each takes. The page offers to commit them when the user accepts.
-5. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
+5. **Make sure the why outlasts the draft.** The notes are deleted when the draft is
+   accepted. Someone reading the commit a year from now has only the repo and whatever it
+   points to. Decide where they'll find the problem and the reason for the fix, and make
+   that part of the draft:
+   - **A small change:** the commit body says it. It should take under a minute to read.
+   - **A ticket** (the request named one, or the branch or project uses Jira): the commit
+     names the ticket key, and the ticket holds the detail. If the ticket doesn't yet say what
+     was found or decided, write the update it needs and keep it for step 8.
+   - **A design change:** update the project's doc inside the draft, so it's committed with
+     the code, and point to it from the commit body.
+   If the why would make the commit body long, it belongs in the ticket or a doc, with the
+   body pointing to it. Then reread each suggested commit as that future reader: can they
+   tell what was wrong and why the change fixes it? If not, fix the commit before showing it.
+   Say on the Overview (in `summary`) where the why is kept, so the user can check it too.
+6. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
    you edit. Tell the user it's open, and give them the change in two or three product-level
    sentences. The page carries the detail. Then run `draft answers <name> --wait` in the
    background: it returns when the user sends their answers from the page. Make each fix they
    asked for, update the notes with `sinceLastReview` saying what you changed, and run it again.
-6. **Before you reply to any feedback, run `draft scope <name>`.** It also says if answers
+7. **Before you reply to any feedback, run `draft scope <name>`.** It also says if answers
    from the page are waiting (`draft answers` prints them). If it lists classes
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them
    (with line ranges) before revising, then revise in the worktree. The page follows.
-7. **Finish when the user decides:**
+8. **Finish when the user decides:**
    - The user may accept from the page, with or without committing and pushing your
      suggested commits. `draft answers --wait` then returns saying what was accepted,
      committed and pushed. Build it if the project has a build, and report the result.
+   - After commits are made, finish what step 5 left for later: show the user the ticket
+     update you wrote, with the commit hashes, and post it when they agree. Posting is
+     outward-facing, so it always waits for their go-ahead.
    - `draft accept <name>` applies the change to the checkout as uncommitted edits and
      removes the worktree. Build it if the project has a build, and report the result. Don't
      commit unless asked.

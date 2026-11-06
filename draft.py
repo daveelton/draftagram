@@ -138,7 +138,19 @@ class DraftServer:
                 self.end_headers()
                 self.wfile.write(data)
 
+            def _from_page(self):
+                """True when the request is addressed to this server by its own name. A web page
+                that has pointed a host name of its own at 127.0.0.1 (DNS rebinding) would
+                otherwise be served this page, token included, and could accept and push."""
+                port = server.httpd.server_address[1]
+                if self.headers.get("Host") in (f"127.0.0.1:{port}", f"localhost:{port}"):
+                    return True
+                self._send(403, "wrong host")
+                return False
+
             def do_GET(self):
+                if not self._from_page():
+                    return
                 server.last_seen = time.time()
                 if not server.p.exists():
                     self._send(410, "This draft was accepted or dropped.")
@@ -158,6 +170,8 @@ class DraftServer:
                     print(e, file=sys.stderr, flush=True)
 
             def do_POST(self):
+                if not self._from_page():
+                    return
                 body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
                 if self.headers.get("X-Draft-Token") != server.token:
                     self._send(403, "wrong token")
@@ -180,7 +194,7 @@ class DraftServer:
                     server.p.show_all_members(name)
                 self._send(200, "ok")
 
-        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        httpd = self.httpd = HTTPServer(("127.0.0.1", 0), Handler)
         httpd.timeout = 15
         json.dump({"pid": os.getpid(), "port": httpd.server_address[1]}, open(self.info_path, "w"))
         signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
@@ -268,7 +282,10 @@ class DraftCli:
     def cmd_answers(self, a):
         """Print the answers the user sent from the page, and take them. With --wait, wait for
         some: Claude runs this in the background after `draft show`."""
-        p = Draft.find(self.root, a.name)
+        # A draft accepted from the page is gone, but what happened is kept beside its folder
+        # until Claude takes it, so a named draft is looked up by that too.
+        named = Draft(self.root, a.name) if a.name else None
+        p = named if named and os.path.exists(named.outcome_path) else Draft.find(self.root, a.name)
         while True:
             if not p.exists():
                 outcome = p.take_outcome()
