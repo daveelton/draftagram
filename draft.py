@@ -333,6 +333,11 @@ class DraftCli:
         self._print_answers(sent)
         print("Make the fixes in the worktree, then update the notes: a new set of checks if any, and "
               "sinceLastReview saying what you changed for each fix. Don't raise the left ones again.")
+        if any(s["decision"] == "leave" and s.get("note") for s in sent):
+            print("A note on a check the user left is a request: the draft stays as it is on that "
+                  "point, but do what the note asks. It may be outside the draft, such as raising a "
+                  "ticket: anything outward-facing waits for the user's go-ahead in the chat. Say in "
+                  "sinceLastReview what you did about each note.")
 
     @staticmethod
     def _print_answers(answers):

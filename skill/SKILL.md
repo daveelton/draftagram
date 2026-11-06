@@ -67,7 +67,10 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    you edit. Tell the user it's open, and give them the change in two or three product-level
    sentences. The page carries the detail. Then run `draft answers <name> --wait` in the
    background: it returns when the user sends their answers from the page. Make each fix they
-   asked for, update the notes with `sinceLastReview` saying what you changed, and run it again.
+   asked for, and act on any note they put on a check they left: Leave keeps the draft as it
+   is on that point, but the note is still a request (such as "raise a ticket for this"; ask
+   before anything outward-facing). Update the notes with `sinceLastReview` saying what you
+   did for each, and run it again.
 7. **Before you reply to any feedback, run `draft scope <name>`.** It also says if answers
    from the page are waiting (`draft answers` prints them). If it lists classes
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them

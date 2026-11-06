@@ -67,10 +67,15 @@ the project's `.gitignore` if it isn't there.
   each says what could go wrong and what Fix will change, with Fix and Leave buttons and an
   optional note. Fix always means Claude makes that change, and Leave that the draft stays as
   it is. Where Claude would leave it, the card says "Claude recommends Leave" and why, and
-  outlines that button; `draft notes` refuses a suggestion that reads as leaving it. Answers are saved as you click, so the page's reloads keep them. "Send fixes to
-  Claude" hands them over: `draft answers --wait`, which Claude runs in the background, prints
-  them. Checks you leave are remembered for the draft, listed folded on later rounds, and
-  Claude doesn't raise them again. The next round opens with what Claude changed for each fix.
+  outlines that button; `draft notes` refuses a suggestion that reads as leaving it. A note on
+  a check you leave is a request ("raise a ticket for this"): Claude acts on it, though the
+  draft stays as it is on that point. Answers are saved as you click, so the page's reloads
+  keep them. Asking for a fix, or writing a note on a check you leave, turns the main button
+  into "Send 1 fix and 1 note to Claude" and hides the accept buttons, so a request reaches
+  Claude before anything is committed. `draft answers --wait`, which Claude runs in the
+  background, prints them. Checks you leave are remembered for the draft, listed folded on
+  later rounds, and Claude doesn't raise them again. The next round opens with what Claude
+  did for each fix and note.
   Every POST to the page server carries a token that only the page it served knows, so another
   web page in the browser can't post to it. The server also answers only requests addressed to
   `127.0.0.1` or `localhost` by its own port. Without that, a web page could point a host name
@@ -84,8 +89,8 @@ the project's `.gitignore` if it isn't there.
   edits to the messages, for as long as the tab is open. If Claude changes a suggestion you
   have edited, your edit stays, with a link to switch to Claude's new version. Each commit's
   files show as one line ("4 files in 3 folders") that opens into a tree, with files that also
-  have your own uncommitted changes marked in blue. Asking for a fix replaces the buttons with
-  "Send fixes to Claude". Accepting is refused if the draft changed after the page was drawn, so what is
+  have your own uncommitted changes marked in blue. Asking for a fix, or a note on a check you
+  leave, replaces the buttons with "Send … to Claude". Accepting is refused if the draft changed after the page was drawn, so what is
   accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
   its files as they are after accepting, so your own uncommitted changes in those files go in
   too: the bar lists any such files. Push uses the branch's upstream, shown top right of the

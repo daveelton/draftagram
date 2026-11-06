@@ -835,15 +835,23 @@ function showAnswers() {{
     card.querySelectorAll('button[data-d]').forEach(b => b.classList.toggle('chosen', b.dataset.d === d));
     card.classList.toggle('left', d === 'leave');
   }}
-  // With a fix asked for, the main button sends the answers to Claude instead of accepting.
-  const fixes = fixCount(), open = CHECKS.filter(id => !answers[id]).length;
-  sendButton.textContent = fixes ? `Send ${{fixes}} fix${{fixes > 1 ? 'es' : ''}} to Claude` : 'Accept, commit, push';
-  acceptButtons.forEach(b => b.hidden = fixes > 0);
+  // With a fix asked for, or a note on a check left, the main button sends the answers to
+  // Claude instead of accepting: a note is a request, and after accepting it would come too
+  // late to change the draft or its commits.
+  const fixes = fixCount(), notes = noteCount(), open = CHECKS.filter(id => !answers[id]).length;
+  const asks = [fixes && `${{fixes}} fix${{fixes > 1 ? 'es' : ''}}`, notes && `${{notes}} note${{notes > 1 ? 's' : ''}}`].filter(Boolean);
+  sendButton.textContent = asks.length ? `Send ${{asks.join(' and ')}} to Claude` : 'Accept, commit, push';
+  acceptButtons.forEach(b => b.hidden = asks.length > 0);
   [sendButton, ...acceptButtons].forEach(b => b.disabled = !TOKEN || sent || finished);
   answeredLine.textContent = open ? `${{open}} check${{open > 1 ? 's' : ''}} not answered.` : '';
   if (!TOKEN) statusLine.textContent = 'Written by draft render: run draft show to accept or answer from the page.';
 }}
 function fixCount() {{ return CHECKS.filter(id => answers[id] && answers[id].decision === 'fix').length; }}
+// Notes on checks left; a note on a fix goes with the fix and isn't counted again.
+function noteCount() {{
+  return CHECKS.filter(id => answers[id] && answers[id].decision === 'leave'
+                             && cardOf(id).querySelector('.check-note').value.trim()).length;
+}}
 function readCommits() {{
   return [...document.querySelectorAll('.commit')].map((el, i) => ({{
     subject: el.querySelector('.subject').value, body: el.querySelector('.body').value, files: COMMIT_FILES[i]}}));
@@ -959,8 +967,9 @@ document.querySelectorAll('.check').forEach(card => {{
   const note = card.querySelector('.check-note');
   note.disabled = !TOKEN;
   note.onchange = () => {{ if (answers[id]) {{ answers[id].note = note.value; send('/answer', {{id, answer: answers[id]}}); }} }};
+  note.oninput = showAnswers;
 }});
-sendButton.onclick = () => fixCount() ? sendAnswers() : messageShown() && accept(true, true);
+sendButton.onclick = () => fixCount() || noteCount() ? sendAnswers() : messageShown() && accept(true, true);
 async function sendAnswers() {{
   CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
   sendButton.disabled = true;
