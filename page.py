@@ -646,6 +646,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
 .commit .files .repo {{ font-weight:600; }}
 .commit .files li.mine {{ background:{p.CURRENT}; display:table; padding:0 4px; }}
 .overlap {{ color:{p.UNREAD}; font-size:12px; margin-top:4px; }}
+.commit .edited {{ grid-column:1 / -1; color:{p.UNREAD}; font-size:12px; }} .commit .edited a {{ color:{p.LINK}; }}
 #log {{ white-space:pre-wrap; font:11px Menlo, monospace; background:{p.BG}; padding:6px; margin:6px 0 0; max-height:200px; overflow:auto; }}
 #actions button.primary {{ background:{p.LINK}; color:{p.BG}; border-color:{p.LINK}; font-weight:600; padding:4px 12px; cursor:pointer; }}
 #actions button:disabled {{ opacity:.5; cursor:default; }}
@@ -847,11 +848,43 @@ function readCommits() {{
   return [...document.querySelectorAll('.commit')].map((el, i) => ({{
     subject: el.querySelector('.subject').value, body: el.querySelector('.body').value, files: COMMIT_FILES[i]}}));
 }}
-document.querySelectorAll('.commit').forEach(el => {{
-  const subject = el.querySelector('.subject'), count = el.querySelector('.count');
+// The user's edits to a message are kept for the tab (sessionStorage), so the reloads the
+// draft's changes cause don't lose them. Each edit remembers the suggestion it started from:
+// if Claude has since changed that suggestion, the edit is still shown, with a way back to
+// Claude's new version.
+document.querySelectorAll('.commit').forEach((el, i) => {{
+  const subject = el.querySelector('.subject'), body = el.querySelector('.body'), count = el.querySelector('.count');
+  const key = 'commit-edit-{name}-' + i, base = {{subject: subject.value, body: body.value}};
   const update = () => {{ count.textContent = `${{subject.value.length}} / ${{SUBJECT_MAX}}`;
                           count.classList.toggle('long', subject.value.length > SUBJECT_MAX); }};
-  subject.oninput = update;
+  const save = () => {{
+    update();
+    const edited = subject.value !== base.subject || body.value !== base.body;
+    try {{
+      if (edited) sessionStorage.setItem(key, JSON.stringify({{base, subject: subject.value, body: body.value}}));
+      else sessionStorage.removeItem(key);
+    }} catch (e) {{}}
+  }};
+  let kept = null;
+  try {{ kept = JSON.parse(sessionStorage.getItem(key)); }} catch (e) {{}}
+  if (kept) {{
+    subject.value = kept.subject; body.value = kept.body;
+    if (kept.base.subject !== base.subject || kept.base.body !== base.body) {{
+      const note = document.createElement('div');
+      note.className = 'edited';
+      note.innerHTML = 'Claude has changed this suggestion since you edited it. <a href="#">Use Claude\\'s new version</a>';
+      note.querySelector('a').onclick = e => {{
+        e.preventDefault();
+        subject.value = base.subject; body.value = base.body;
+        note.remove(); save(); layoutActions();
+      }};
+      body.after(note);
+      kept.base = base;     // the edit now stands against the new suggestion
+      try {{ sessionStorage.setItem(key, JSON.stringify(kept)); }} catch (e) {{}}
+    }}
+  }}
+  subject.oninput = save;
+  body.oninput = save;
   update();
 }});
 // The commit area's height is set by dragging the divider above it, and the room it gains or
@@ -909,6 +942,7 @@ async function accept(commit, push) {{
   const reply = r ? await r.json().catch(e => ({{ok: false, log: 'No reply from the page server.'}}))
                   : {{ok: false, log: 'The page server is not running.'}};
   finished = reply.ok || (r && r.status === 200);     // once accepted, the draft is gone whatever git did
+  if (finished) document.querySelectorAll('.commit').forEach((el, i) => {{ try {{ sessionStorage.removeItem('commit-edit-{name}-' + i); }} catch (e) {{}} }});
   log.hidden = !reply.log;
   log.textContent = reply.log;
   statusLine.textContent = !finished ? 'Not accepted, see below.'

@@ -80,7 +80,9 @@ the project's `.gitignore` if it isn't there.
   "Accept and commit" and "Accept only". With the messages folded, the first click on either
   commit button only opens them, so a commit is never made from a message you haven't seen;
   click again to go ahead. Drag the divider above the bar to make it taller or shorter: the
-  room goes to the message bodies, and the height is kept as the page redraws. Each commit's
+  room goes to the message bodies, and the height is kept as the page redraws. So are your
+  edits to the messages, for as long as the tab is open. If Claude changes a suggestion you
+  have edited, your edit stays, with a link to switch to Claude's new version. Each commit's
   files show as one line ("4 files in 3 folders") that opens into a tree, with files that also
   have your own uncommitted changes marked in blue. Asking for a fix replaces the buttons with
   "Send fixes to Claude". Accepting is refused if the draft changed after the page was drawn, so what is
