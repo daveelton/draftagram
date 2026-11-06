@@ -28,6 +28,10 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
 2. **Start the draft** from the project's checkout:
    `draft start <short-name> --summary "<one line, in the user's words>"`.
    It prints a worktree path: the checkout as it is now, uncommitted changes included.
+   A draft covers one repository. In a project with submodules, the draft's submodule
+   folders are empty, so a change inside a submodule can't be made there. If the change
+   needs files in a submodule, tell the user before starting, and draft each repository
+   separately (the submodule's draft is started from its own folder).
 3. **Make the change only inside that worktree.** Never edit the checkout while a draft
    is open. The worktree has no build folder. Leave building until the change is accepted,
    unless the user asks for a build check.

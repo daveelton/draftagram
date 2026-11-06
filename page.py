@@ -63,6 +63,50 @@ def rgba(colour, alpha):
     return f"rgba({n >> 16}, {(n >> 8) & 255}, {n & 255}, {alpha})"
 
 
+class FileTree:
+    """A commit's files as one line ("12 files in 3 folders") that unfolds into a tree of
+    folders, under the repository they belong to. A draft covers one repository, so there is
+    one root for now; files the user's own diff also changes are marked in its colour."""
+
+    def __init__(self, repo, paths, mine=()):
+        self.repo, self.paths, self.mine = repo, sorted(paths), set(mine)
+
+    def summary(self):
+        n, folders = len(self.paths), len({os.path.dirname(p) for p in self.paths})
+        return (f"{n} file{'s' if n != 1 else ''} in {folders} folder{'s' if folders != 1 else ''}"
+                if folders > 1 else f"{n} file{'s' if n != 1 else ''}")
+
+    def _nest(self):
+        root = {}
+        for p in self.paths:
+            node = root
+            for part in p.split("/")[:-1]:
+                node = node.setdefault(part + "/", {})
+            node[p.split("/")[-1]] = p
+        return root
+
+    def _html(self, node):
+        out = []
+        for name in sorted(node, key=lambda k: (not k.endswith("/"), k.lower())):
+            child = node[name]
+            if isinstance(child, dict):
+                # A folder holding only one folder is shown as one path: Shared/Source/bus/
+                while len(child) == 1 and isinstance(next(iter(child.values())), dict):
+                    sub = next(iter(child))
+                    name, child = name + sub, child[sub]
+                out.append(f'<li><details open><summary class="folder">{esc(name)}</summary>'
+                           f'{self._html(child)}</details></li>')
+            else:
+                cls = ' class="mine" title="Also has your own uncommitted changes"' if child in self.mine else ""
+                out.append(f"<li{cls}>{esc(name)}</li>")
+        return "<ul>" + "".join(out) + "</ul>"
+
+    def html(self):
+        return (f'<details class="files"><summary>{self.summary()}</summary>'
+                f'<ul><li><details open><summary class="repo">{esc(self.repo)}</summary>'
+                f'{self._html(self._nest())}</details></li></ul></details>')
+
+
 class DiffPanel:
     """One diff rendered as HTML rows, with an anchor per line so the diagram can jump to it.
 
@@ -451,13 +495,15 @@ class DraftPage:
     def _commit_bar(self):
         """The commit messages to edit, folded, and a line on what accepting will commit."""
         commits = self._commits()
+        own = {f.path for f in self.v.current.files}
+        repo = os.path.basename(self.v.root)
         entries = "".join(
             f'<div class="commit"><input class="subject" value="{esc(c.get("subject", ""))}" maxlength="200">'
             f'<span class="count"></span><textarea class="body" rows="6" wrap="off">{esc(c.get("body", ""))}</textarea>'
-            f'<div class="files">{esc("  ".join(c.get("files", [])))}</div></div>' for c in commits)
+            f'{FileTree(repo, c.get("files", []), own).html()}</div>' for c in commits)
         subjects = " · ".join(esc(c.get("subject", "")) for c in commits)
         label = f"{len(commits)} commits" if len(commits) > 1 else "Commit message"
-        mine = sorted({f for c in commits for f in c.get("files", [])} & {f.path for f in self.v.current.files})
+        mine = sorted({f for c in commits for f in c.get("files", [])} & own)
         overlap = (f'<div class="overlap">These files also have your own uncommitted changes, which the '
                    f'commit will include: {esc(", ".join(mine))}</div>') if mine else ""
         return f'<details id="message"><summary>{label}: <b>{subjects}</b></summary>{entries}</details>{overlap}'
@@ -581,15 +627,24 @@ code {{ font:11.5px Menlo, monospace; background:{p.RAISED}; padding:0 3px; bord
 .check-actions button.chosen {{ background:{p.NOTE}; color:{p.BG}; border-color:{p.NOTE}; font-weight:600; }}
 .check-note {{ flex:1; font:12px -apple-system, Helvetica, sans-serif; color:{p.TEXT}; background:{p.BG}; border:1px solid {p.BORDER}; padding:2px 6px; }}
 details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.TEXT}; }}
-#actions {{ border-top:1px solid {p.BORDER}; background:{p.PANEL}; padding:8px 10px; max-height:55vh; overflow:auto; }}
+#divider {{ flex:none; height:6px; cursor:ns-resize; background:{p.PANEL}; border-top:1px solid {p.BORDER}; }}
+#divider:hover, #divider.dragging {{ background:{p.LINK}; }}
+#actions {{ flex:none; background:{p.PANEL}; padding:4px 10px 8px; max-height:55vh; overflow:auto; box-sizing:border-box; }}
+#actions.sized {{ max-height:none; }}
 #actions .row {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:6px; }}
 #actions button {{ padding:4px 10px; cursor:pointer; }}
 #message summary {{ cursor:pointer; color:{p.DIM}; }} #message summary b {{ color:{p.TEXT}; font-weight:600; }}
 .commit {{ display:grid; grid-template-columns:1fr auto; gap:4px 8px; margin:6px 0; padding:8px; background:{p.BG}; border:1px solid {p.BORDER}; }}
 .commit input, .commit textarea {{ font:12px Menlo, monospace; color:{p.TEXT}; background:{p.PANEL}; border:1px solid {p.BORDER}; padding:3px 6px; }}
-.commit textarea {{ grid-column:1 / -1; white-space:pre; overflow-x:auto; resize:vertical; }}
+.commit textarea {{ grid-column:1 / -1; white-space:pre; overflow-x:auto; resize:none; }}
 .commit .count {{ font-size:11px; color:{p.DIM}; align-self:center; }} .commit .count.long {{ color:{p.UNREAD}; }}
-.commit .files {{ grid-column:1 / -1; font:11px Menlo, monospace; color:{p.DIM}; overflow-wrap:anywhere; }}
+.commit .files {{ grid-column:1 / -1; font-size:12px; color:{p.DIM}; }}
+.commit .files > summary {{ cursor:pointer; }}
+.commit .files ul {{ list-style:none; margin:0; padding-left:16px; font:11.5px Menlo, monospace; color:{p.TEXT}; }}
+.commit .files > ul {{ padding-left:4px; margin-top:4px; }}
+.commit .files .folder, .commit .files .repo {{ cursor:pointer; color:{p.DIM}; }}
+.commit .files .repo {{ font-weight:600; }}
+.commit .files li.mine {{ background:{p.CURRENT}; display:table; padding:0 4px; }}
 .overlap {{ color:{p.UNREAD}; font-size:12px; margin-top:4px; }}
 #log {{ white-space:pre-wrap; font:11px Menlo, monospace; background:{p.BG}; padding:6px; margin:6px 0 0; max-height:200px; overflow:auto; }}
 #actions button.primary {{ background:{p.LINK}; color:{p.BG}; border-color:{p.LINK}; font-weight:600; padding:4px 12px; cursor:pointer; }}
@@ -612,11 +667,12 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
   <div id="prop" class="panel"><div class="diff">{prop_diff}</div><div class="whole-diff">{prop_whole}</div></div>
   <div id="cur" class="panel"><div class="diff">{cur_diff}</div><div class="whole-diff">{cur_whole}</div></div>
   <div id="code" class="panel"><p class="empty">Click a class or member in the diagram.</p></div>
-  <div id="actions">{commit_bar}
+  <div id="divider" title="Drag to give the commit message more or less room"></div>
+  <div id="actions"><div id="actions-in">{commit_bar}
    <div class="row"><button class="primary" id="send">Accept, commit, push</button><button id="commit">Accept and commit</button><button id="accept">Accept only</button><span class="status" id="status"></span></div>
    <div class="row"><span class="status" id="answered"></span></div>
    <pre id="log" hidden></pre>
-  </div>
+  </div></div>
  </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
@@ -798,6 +854,50 @@ document.querySelectorAll('.commit').forEach(el => {{
   subject.oninput = update;
   update();
 }});
+// The commit area's height is set by dragging the divider above it, and the room it gains or
+// loses goes to the message bodies. Kept across the reloads the draft's changes cause.
+const message = document.getElementById('message'), actions = document.getElementById('actions');
+const actionsIn = document.getElementById('actions-in'), divider = document.getElementById('divider');
+const side = document.getElementById('side'), MIN_BODY = 60;
+function savedHeight() {{ try {{ return +localStorage.getItem('actions-h') || 0; }} catch (e) {{ return 0; }} }}
+function layoutActions() {{
+  const bodies = [...document.querySelectorAll('.commit .body')], h = savedHeight();
+  if (!message.open || !h) {{
+    actions.classList.remove('sized'); actions.style.height = ''; bodies.forEach(b => b.style.height = '');
+    return;
+  }}
+  actions.classList.add('sized');
+  actions.style.height = Math.max(120, Math.min(h, side.clientHeight - 140)) + 'px';
+  bodies.forEach(b => b.style.height = MIN_BODY + 'px');
+  const cs = getComputedStyle(actions);
+  const spare = actions.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom) - actionsIn.offsetHeight;
+  if (spare > 0) bodies.forEach(b => b.style.height = (MIN_BODY + spare / bodies.length) + 'px');
+}}
+divider.onpointerdown = e => {{
+  e.preventDefault();
+  message.open = true;
+  divider.setPointerCapture(e.pointerId);
+  divider.classList.add('dragging');
+  divider.onpointermove = ev => {{
+    const h = side.getBoundingClientRect().bottom - ev.clientY - divider.offsetHeight;
+    try {{ localStorage.setItem('actions-h', Math.round(h)); }} catch (err) {{}}
+    layoutActions();
+  }};
+  divider.onpointerup = () => {{ divider.onpointermove = null; divider.classList.remove('dragging'); }};
+}};
+try {{ message.open = !!sessionStorage.getItem('message-open'); }} catch (e) {{}}
+message.addEventListener('toggle', () => {{ try {{ sessionStorage.setItem('message-open', message.open ? '1' : ''); }} catch (e) {{}} }});
+actions.addEventListener('toggle', layoutActions, true);    // the message, and folders in the file trees
+window.addEventListener('resize', layoutActions);
+layoutActions();
+// Committing needs the message checked first: with it folded, the first click only opens it.
+function messageShown() {{
+  if (message.open) return true;
+  message.open = true;
+  message.querySelector('.subject').focus();
+  statusLine.textContent = 'Check the commit message, then click again to commit.';
+  return false;
+}}
 async function accept(commit, push) {{
   finished = true;
   showAnswers();
@@ -817,7 +917,7 @@ async function accept(commit, push) {{
       : 'Accepted: the change is in your checkout, uncommitted.';
   showAnswers();
 }}
-document.getElementById('commit').onclick = () => accept(true, false);
+document.getElementById('commit').onclick = () => messageShown() && accept(true, false);
 document.getElementById('accept').onclick = () => accept(false, false);
 document.querySelectorAll('.check').forEach(card => {{
   const id = card.dataset.id;
@@ -826,7 +926,7 @@ document.querySelectorAll('.check').forEach(card => {{
   note.disabled = !TOKEN;
   note.onchange = () => {{ if (answers[id]) {{ answers[id].note = note.value; send('/answer', {{id, answer: answers[id]}}); }} }};
 }});
-sendButton.onclick = () => fixCount() ? sendAnswers() : accept(true, true);
+sendButton.onclick = () => fixCount() ? sendAnswers() : messageShown() && accept(true, true);
 async function sendAnswers() {{
   CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
   sendButton.disabled = true;

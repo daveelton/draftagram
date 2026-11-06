@@ -77,8 +77,13 @@ the project's `.gitignore` if it isn't there.
   of its own at 127.0.0.1 (DNS rebinding), load this page with its token, and accept and push.
 - **Accepting from the page.** The bar under the side panel holds the commits Claude suggests
   (folded; each subject and message can be edited) and three buttons: "Accept, commit, push",
-  "Accept and commit" and "Accept only". Asking for a fix replaces them with "Send fixes to
-  Claude". Accepting is refused if the draft changed after the page was drawn, so what is
+  "Accept and commit" and "Accept only". With the messages folded, the first click on either
+  commit button only opens them, so a commit is never made from a message you haven't seen;
+  click again to go ahead. Drag the divider above the bar to make it taller or shorter: the
+  room goes to the message bodies, and the height is kept as the page redraws. Each commit's
+  files show as one line ("4 files in 3 folders") that opens into a tree, with files that also
+  have your own uncommitted changes marked in blue. Asking for a fix replaces the buttons with
+  "Send fixes to Claude". Accepting is refused if the draft changed after the page was drawn, so what is
   accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
   its files as they are after accepting, so your own uncommitted changes in those files go in
   too: the bar lists any such files. Push uses the branch's upstream, shown top right of the
@@ -165,6 +170,15 @@ Parsing details that matter:
 - C++ only. Other files show in the diffs but not the diagram.
 - `accept` uses `git apply`. If the checkout has changed in the same lines since the draft
   started, accept refuses and says why. Rebase by dropping and starting again.
+- One repository per draft. `git worktree add` doesn't check out submodules, so in a draft
+  of the parent repo the submodules' folders are empty: a draft can't change files inside a
+  submodule, and your uncommitted work inside one isn't copied into the draft. Classes in a
+  submodule still appear in the diagram, read from your checkout. A change to a submodule
+  needs its own draft, started from the submodule's folder; there the diagram is likely
+  empty unless the submodule has its own `compile_commands.json`, and `draft start` adds
+  `temp/` to the submodule's `.gitignore`. Drafts that span the parent and its submodules
+  (a worktree per repo, submodule commits first, then the parent's pointer commit, and
+  pushes in that order) aren't built.
 
 Ideas not yet built, with their reasoning, are in `future-ideas.md`.
 
