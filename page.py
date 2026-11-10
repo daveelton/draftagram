@@ -672,6 +672,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
   <div id="actions"><div id="actions-in">{commit_bar}
    <div class="row"><button class="primary" id="send">Accept, commit, push</button><button id="commit">Accept and commit</button><button id="accept">Accept only</button><span class="status" id="status"></span></div>
    <div class="row"><span class="status" id="answered"></span></div>
+   <div class="row" id="working" hidden><span class="status" id="working-text"></span><button id="anyway" hidden>Accept anyway</button></div>
    <pre id="log" hidden></pre>
   </div></div>
  </div>
@@ -842,10 +843,35 @@ function showAnswers() {{
   const asks = [fixes && `${{fixes}} fix${{fixes > 1 ? 'es' : ''}}`, notes && `${{notes}} note${{notes > 1 ? 's' : ''}}`].filter(Boolean);
   sendButton.textContent = asks.length ? `Send ${{asks.join(' and ')}} to Claude` : 'Accept, commit, push';
   acceptButtons.forEach(b => b.hidden = asks.length > 0);
-  [sendButton, ...acceptButtons].forEach(b => b.disabled = !TOKEN || sent || finished);
+  // Accepting waits while Claude is working on the draft, so a half-made change isn't accepted.
+  // Sending answers doesn't: they wait for Claude's next `draft answers --wait`.
+  const held = heldForClaude();
+  sendButton.disabled = !TOKEN || sent || finished || (!asks.length && held);
+  acceptButtons.forEach(b => b.disabled = !TOKEN || sent || finished || held);
+  showWorking(held);
   answeredLine.textContent = open ? `${{open}} check${{open > 1 ? 's' : ''}} not answered.` : '';
   if (!TOKEN) statusLine.textContent = 'Written by draft render: run draft show to accept or answer from the page.';
 }}
+// Whether Claude is waiting for the page (`draft answers --wait` running), from /claude.
+let claude = null, anyway = false;
+function heldForClaude() {{ return !!TOKEN && !anyway && !(claude && claude.listening); }}
+function showWorking(held) {{
+  const row = document.getElementById('working'), text = document.getElementById('working-text');
+  const button = document.getElementById('anyway');
+  row.hidden = !held || !claude || sent || finished;
+  // No transcript found means Claude's activity can't be told: offer the way out too.
+  const gone = claude && (claude.idle === null || claude.idle >= claude.gone_after);
+  text.textContent = gone
+      ? (claude.idle === null ? "Claude isn't waiting for the page, and its session can't be found."
+         : `Claude isn't waiting for the page and its session has been quiet for ${{Math.round(claude.idle / 60)}} min: it may have ended.`)
+      : 'Claude is working on the draft. Accepting waits until it has finished.';
+  button.hidden = !gone;
+}}
+async function checkClaude() {{
+  try {{ claude = await (await fetch('/claude')).json(); }} catch (e) {{ return; }}
+  showAnswers();
+}}
+document.getElementById('anyway').onclick = () => {{ anyway = true; showAnswers(); }};
 function fixCount() {{ return CHECKS.filter(id => answers[id] && answers[id].decision === 'fix').length; }}
 // Notes on checks left; a note on a fix goes with the fix and isn't counted again.
 function noteCount() {{
@@ -946,7 +972,7 @@ async function accept(commit, push) {{
   // The answers go with the accept: Claude is told them with the outcome, since all-Leave
   // answers accept without being sent first.
   CHECKS.forEach(id => {{ if (answers[id]) answers[id].note = cardOf(id).querySelector('.check-note').value; }});
-  const r = await send('/accept', {{stamp: STAMP, commit, push, commits: readCommits(), answers}}).catch(e => null);
+  const r = await send('/accept', {{stamp: STAMP, commit, push, commits: readCommits(), answers, anyway}}).catch(e => null);
   const reply = r ? await r.json().catch(e => ({{ok: false, log: 'No reply from the page server.'}}))
                   : {{ok: false, log: 'The page server is not running.'}};
   finished = reply.ok || (r && r.status === 200);     // once accepted, the draft is gone whatever git did
@@ -986,6 +1012,7 @@ if (TOKEN) fetch('/answers').then(r => r.json()).then(saved => {{
   showAnswers();
 }});
 showAnswers();
+if (TOKEN) checkClaude();
 document.getElementById('svg').addEventListener('click', e => dragged ? e.preventDefault() : onLink(e));
 document.querySelector('header').addEventListener('click', onLink);
 function onLink(e) {{
@@ -1020,6 +1047,7 @@ if (location.protocol.startsWith('http')) setInterval(async () => {{
     if (r.status === 410) return stopped('This draft was accepted or dropped.');
     const s = await r.text();
     if (s && s !== STAMP) location.reload();
+    checkClaude();
     const b = document.getElementById('stopped'); if (b) b.remove();
   }} catch (e) {{
     stopped('The page server has stopped. Run `draft show {name}` in the project to start it again.');

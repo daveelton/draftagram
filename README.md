@@ -90,8 +90,15 @@ the project's `.gitignore` if it isn't there.
   have edited, your edit stays, with a link to switch to Claude's new version. Each commit's
   files show as one line ("4 files in 3 folders") that opens into a tree, with files that also
   have your own uncommitted changes marked in blue. Asking for a fix, or a note on a check you
-  leave, replaces the buttons with "Send … to Claude". Accepting is refused if the draft changed after the page was drawn, so what is
-  accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
+  leave, replaces the buttons with "Send … to Claude". While Claude is working on the draft,
+  the accept buttons are held, with "Claude is working" under them, so a half-made change
+  can't be accepted. Claude counts as working whenever its `draft answers --wait` isn't
+  running: the wait leaves `waiting.json`, with its process id, in the draft's folder, and the
+  server refuses an accept while there's no live wait. Sending answers isn't held; they wait
+  for Claude's next round. If no wait is running and Claude's session transcript has been
+  quiet for 3 minutes, or can't be found, the session has probably ended, and the page offers
+  "Accept anyway". Accepting is also refused if the draft changed after the page was drawn,
+  so what is accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
   its files as they are after accepting, so your own uncommitted changes in those files go in
   too: the bar lists any such files. Push uses the branch's upstream, shown top right of the
   page. The page server runs git itself, with your credentials: Claude only suggests the

@@ -15,6 +15,7 @@ import subprocess
 import time
 
 from notes import Notes
+from reads import ReadLog
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
@@ -39,6 +40,7 @@ class Draft:
         self.scope_path = os.path.join(self.dir, "scope.json")
         self.notes_path = os.path.join(self.dir, "notes.json")
         self.answers_path = os.path.join(self.dir, "answers.json")
+        self.waiting_path = os.path.join(self.dir, "waiting.json")
         # What happened when the page accepted the draft. Beside the draft's folder, not in it,
         # since accepting removes the folder; `draft answers --wait` reports it to Claude.
         self.outcome_path = os.path.join(root, "temp", "draft", f"{name}.outcome.json")
@@ -322,6 +324,36 @@ class Draft:
         if sent:
             self._save_answers(data)
         return sent
+
+    # ---------- whether Claude is listening ----------
+    # `draft answers --wait` leaves waiting.json, with its process id, while it runs. Claude runs
+    # it whenever it has finished a round, so while no live wait is running Claude is working on
+    # the draft (or its session has ended), and the page holds back accepting.
+
+    def mark_waiting(self):
+        with open(self.waiting_path, "w") as f:
+            json.dump({"pid": os.getpid(), "since": time.time()}, f)
+
+    def clear_waiting(self):
+        try:
+            if json.load(open(self.waiting_path)).get("pid") == os.getpid():
+                os.remove(self.waiting_path)
+        except (OSError, ValueError):
+            pass
+
+    def listening(self):
+        """True while a `draft answers --wait` for this draft is running."""
+        try:
+            os.kill(json.load(open(self.waiting_path))["pid"], 0)
+            return True
+        except (OSError, ValueError, KeyError):
+            return False
+
+    def claude_idle_seconds(self):
+        """Seconds since Claude's session transcript was last written, or None if it isn't found."""
+        times = [os.path.getmtime(t) for t in ReadLog(self.meta["session"]).transcripts()
+                 if os.path.exists(t)]
+        return time.time() - max(times) if times else None
 
     # ---------- what the user has added to the diagram ----------
     # scope.json: {"expanded": [{"name", "file"}], "full": [class names drawn with every member]}

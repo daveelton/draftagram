@@ -42,6 +42,9 @@ from view import DraftView, UnitCache   # noqa: E402
 # stays; `draft show` starts the server again.
 IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 10 * 60))
 WAIT_POLL_SECONDS = 1
+# Claude not waiting for the page and its transcript untouched this long: its session has
+# probably ended, and the page offers to accept anyway.
+SESSION_GONE_SECONDS = 3 * 60
 
 
 class DraftServer:
@@ -100,6 +103,9 @@ class DraftServer:
         """Accept the draft from the page, then make the commits it asked for and push if asked.
         Returns (HTTP status, reply). Refused if the draft changed after the page was drawn, so
         what is accepted is what the user saw."""
+        if not self.p.listening() and not request.get("anyway"):
+            return 409, {"ok": False, "log": "Claude is working on the draft. Accept once it has "
+                                              "finished, or accept anyway if its session has ended."}
         if request.get("stamp") != DraftView(self.p, self.cache).stamp():
             return 409, {"ok": False, "log": "The draft changed after this page was drawn. "
                                               "The page will redraw; check it and accept again."}
@@ -128,6 +134,13 @@ class DraftServer:
         self.p.save_outcome(outcome)
         print(json.dumps(outcome, indent=2), flush=True)
         return 200, {"ok": ok, "log": log, "commits": made, "pushed": outcome["pushed"]}
+
+    def claude_state(self):
+        """For the page: is Claude waiting for the page, and how long since its session did
+        anything. Not listening and long idle means the session has probably ended."""
+        idle = self.p.claude_idle_seconds()
+        return {"listening": self.p.listening(), "idle": None if idle is None else round(idle),
+                "gone_after": SESSION_GONE_SECONDS}
 
     def serve(self):
         server = self
@@ -167,6 +180,8 @@ class DraftServer:
                         self._send(200, DraftView(server.p, server.cache).stamp())
                     elif self.path == "/answers":
                         self._send(200, json.dumps(server.p.answers), "application/json")
+                    elif self.path == "/claude":
+                        self._send(200, json.dumps(server.claude_state()), "application/json")
                     elif self.path == "/":
                         self._send(200, server.render(), "text/html")
                     else:
@@ -293,6 +308,15 @@ class DraftCli:
         # until Claude takes it, so a named draft is looked up by that too.
         named = Draft(self.root, a.name) if a.name else None
         p = named if named and os.path.exists(named.outcome_path) else Draft.find(self.root, a.name)
+        # While this waits, Claude is listening, and the page lets the user accept.
+        if a.wait and p.exists():
+            p.mark_waiting()
+        try:
+            self._answers(p, a)
+        finally:
+            p.clear_waiting()
+
+    def _answers(self, p, a):
         while True:
             outcome = p.read_outcome()
             if outcome and outcome.get("state") == "accepting":
