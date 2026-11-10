@@ -53,6 +53,14 @@ FIELDS = {"kind": str, "problem": str, "summary": list, "processes": list, "link
           "sequence": str, "behaviour": list, "files": dict, "lineNotes": list,
           "checks": list, "minorChecks": list, "sinceLastReview": list, "commits": list}
 
+# What each entry of a list field is: text, or an object, and for an object the text keys the
+# page reads from it. The page calls .get on the objects, so a string there fails as it draws.
+ITEMS = {"summary": str, "minorChecks": str,
+         "processes": ("name", "note"), "links": ("from", "to", "label"),
+         "behaviour": ("case", "before", "after"), "lineNotes": ("file", "note"),
+         "checks": ("id", "tag", "title", "suggestion", "recommend", "because", "detail", "file"),
+         "sinceLastReview": ("title", "done"), "commits": ("subject", "body")}
+
 
 class Notes:
     def __init__(self, data=None):
@@ -76,6 +84,7 @@ class Notes:
                 out.append(f"unknown field '{key}' (draft notes --format)")
             elif not isinstance(value, FIELDS[key]):
                 out.append(f"'{key}' should be a {FIELDS[key].__name__}")
+        out += Notes._shape_problems(data)
         for p in data.get("processes", []) if isinstance(data.get("processes"), list) else []:
             if not isinstance(p, dict) or not isinstance(p.get("name"), str):
                 out.append("each process needs a name")
@@ -90,6 +99,34 @@ class Notes:
         for c in checks:
             if isinstance(c, dict):
                 out += Notes._check_problems(c)
+        return out
+
+    @staticmethod
+    def _shape_problems(data):
+        """Entries of the wrong shape, one line per field, quoting FORMAT's line for it."""
+        def expected(key):
+            line = next((l.strip() for l in FORMAT.splitlines() if l.strip().startswith(f'"{key}"')), "")
+            return f"'{key}' entries should look like: {line}" if line else f"'{key}' has an entry of the wrong shape"
+
+        def texts(item, keys):
+            return isinstance(item, dict) and all(isinstance(item.get(k, ""), str) for k in keys)
+
+        out = []
+        for key, item in ITEMS.items():
+            value = data.get(key)
+            if not isinstance(value, list):
+                continue
+            ok = all(isinstance(i, str) for i in value) if item is str else all(texts(i, item) for i in value)
+            if not ok:
+                out.append(expected(key))
+        files = data.get("files")
+        if isinstance(files, dict) and not all(texts(f, ("role", "note")) for f in files.values()):
+            out.append(expected("files"))
+        commits = data.get("commits")
+        if isinstance(commits, list) and not all(
+                isinstance(c, dict) and isinstance(c.get("files", []), list)
+                and all(isinstance(f, str) for f in c.get("files", [])) for c in commits):
+            out.append("each commit's files should be a list of paths")
         return out
 
     # A suggestion that starts like this is advice to leave the draft as it is, so Fix would
