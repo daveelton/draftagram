@@ -83,6 +83,22 @@ class Draft:
     def meta(self):
         return json.load(open(self.meta_path))
 
+    def hand_over(self, url):
+        """What Claude says in the chat when the page opens. The page explains the draft, so
+        the chat only sends the user there, in the page's own words (its headline), and a
+        second telling in the chat would give the user two versions to compare."""
+        headline = self.meta.get("summary", "").strip().rstrip(".")
+        headline = f" {headline}." if headline else ""
+        where = ('"Since your last review" on its Overview says what changed'
+                 if self.notes.data.get("sinceLastReview") else "Its Overview explains the change")
+        return (f"Say this to the user, and nothing else about the draft:\n"
+                f'  The draft "{self.name}" is open at {url}.{headline} {where}, so read on '
+                f"there. "
+                f"Nothing in the checkout has changed.\n"
+                f"The page tells the user about the draft; don't retell the problem, the change, "
+                f"the checks or the notes in the chat or in a recap. Add only what the page can't "
+                f"show, such as something you built or ran outside the draft.")
+
     # ---------- lifecycle ----------
 
     def start(self, session_id, summary=""):

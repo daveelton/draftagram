@@ -64,8 +64,17 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    tell what was wrong and why the change fixes it? If not, fix the commit before showing it.
    Say on the Overview (in `summary`) where the why is kept, so the user can check it too.
 6. **Open the page:** `draft show <name>`. It opens in the browser and redraws itself as
-   you edit. Tell the user it's open, and give them the change in two or three product-level
-   sentences. The page carries the detail. Then run `draft answers <name> --wait` in the
+   you edit. It prints the line to say to the user: say that, and nothing else about the
+   draft. The user reads the draft on the page, and a second telling in the chat, in other
+   words, leaves them comparing the two. That covers the problem, what changed, the checks
+   and the notes, and it covers any recap of your turn as well as your message. The chat is
+   for what the page can't show: something you built, ran or found outside the draft. If
+   you have a point about the draft that the page doesn't make, such as why an earlier part
+   of the change is still needed, don't drop it and don't say it in the chat: add it to the
+   notes (`summary`, `behaviour` or `minorChecks`) before you open the page. The
+   same holds each time you revise the draft, whether the request came from the page or the
+   chat: what you did goes in `sinceLastReview`, `draft notes` prints the line again, and you
+   say that line and no summary of the revision. Then run `draft answers <name> --wait` in the
    background: it returns when the user sends their answers from the page. While it runs, the
    page lets the user accept; while it doesn't, the page says you're working and holds
    accepting. So start it again as soon as each round of edits is finished, and not before.

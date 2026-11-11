@@ -89,6 +89,10 @@ class DraftServer:
                     break
             else:
                 raise SystemExit(f"server didn't start; see {log.name}")
+        return cls.url(info)
+
+    @staticmethod
+    def url(info):
         return f"http://127.0.0.1:{info['port']}/"
 
     def render(self):
@@ -270,7 +274,7 @@ class DraftCli:
         p = Draft.find(self.root, a.name)
         url = DraftServer.launch(p)
         webbrowser.open(url)
-        print(url)
+        print(f"{url}\n\n{p.hand_over(url)}")
 
     def cmd_serve(self, a):
         DraftServer(Draft.find(self.root, a.name)).serve()
@@ -300,6 +304,11 @@ class DraftCli:
             raise SystemExit("notes not saved:\n  " + "\n  ".join(problems))
         p.set_notes(data)
         print(f"Notes saved for '{p.name}'; an open page redraws with them.")
+        # A round of revisions ends here, usually without another `draft show`, so the line
+        # that sends the user back to the page is given here too.
+        info = DraftServer.running(p)
+        if data.get("sinceLastReview") and info:
+            print("\n" + p.hand_over(DraftServer.url(info)))
 
     def cmd_answers(self, a):
         """Print the answers the user sent from the page, and take them. With --wait, wait for

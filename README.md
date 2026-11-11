@@ -36,6 +36,11 @@ the project's `.gitignore` if it isn't there.
 
 `draft show` opens a page in the browser, served on localhost.
 
+The page is where the draft is explained. When it opens, `draft show` gives Claude one line to
+say in the chat: that the page is open, its headline, and that nothing in the checkout has
+changed. Claude doesn't retell the draft there, so there is one account of it to read. The
+chat is for what the page can't show, such as a build Claude ran.
+
 - **Diagram, on the left.** The draft's classes and members are coloured: green added, red
   removed (struck through), amber changed. A member counts as changed when its declaration
   differs or when the diff touches its declaration or any of its bodies, including bodies in
