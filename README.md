@@ -11,22 +11,29 @@ Run from Claude with the `/draft` skill (`skill/SKILL.md`), or by hand with `dra
 
 For macOS with Claude Code. Claude can follow these steps as written.
 
-1. **Requirements.** `uv` (`brew install uv`) runs the tool and installs its one Python
-   dependency, the libclang bindings, on first use. Apple's Command Line Tools
+1. **Requirements.** `uv` (`brew install uv`) builds the tool's Python environment, with its
+   one dependency, the libclang bindings. Apple's Command Line Tools
    (`xcode-select --install`) or Xcode provide libclang itself. The diagram needs C++ projects
    with a CMake `compile_commands.json`: set `CMAKE_EXPORT_COMPILE_COMMANDS=ON`, or use CLion,
    whose `cmake-build-debug` folder usually already has one.
 2. **Clone** this repo somewhere permanent, for example
    `git clone git@github.com:daveelton/draftagram.git ~/Development/draftagram`.
-3. **Link the command and the skill.** Links, not copies, so a `git pull` updates both:
-   ```
-   mkdir -p ~/.local/bin ~/.claude/skills
-   ln -sfn ~/Development/draftagram/draft.py ~/.local/bin/draft
-   ln -sfn ~/Development/draftagram/skill ~/.claude/skills/draft
-   ```
-   `~/.local/bin` must be on `PATH`.
-4. **Check.** `draft --help` prints the commands. The first run takes a few seconds while `uv`
-   fetches the bindings. In a new Claude Code session, `/draft` is then available.
+3. **Run the install script:** `~/Development/draftagram/install.sh`. It builds a Python
+   environment for the tool in `.venv` inside the repo, writes the `draft` command to
+   `~/.local/bin` (which must be on `PATH`), and links the skill into `~/.claude/skills`, so a
+   `git pull` updates both. Run it again after moving the repo, or after a pull that adds a
+   dependency.
+4. **Check.** `draft --help` prints the commands. In a new Claude Code session, `/draft` is
+   then available.
+
+The `draft` command runs the environment's Python directly and doesn't go through `uv`. `uv`
+opens its shared cache in `~/.cache/uv` each time it runs, which Claude Code's Bash sandbox
+refuses, and allowing that write would let a sandboxed command change packages other projects
+use. Installed this way, every `draft` command runs sandboxed except `draft show`, which
+starts the page server on a local port and opens the browser: Claude runs that one command
+outside the sandbox. The other commands never contact the server. They read the heartbeat it
+keeps in the draft's `server.json`, because the sandbox refuses a command inside it both a
+connection to a local port and a signal to a process outside.
 
 Nothing else is changed: there's no hook, and Claude Code's settings aren't touched. Each
 project gets a `temp/draft/` folder while a draft is open, and `draft start` adds `temp/` to

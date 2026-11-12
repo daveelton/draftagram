@@ -15,16 +15,16 @@
     draft drop [NAME]                   throw the draft away
     draft list
 
-Docs: README.md beside this script (readlink -f "$(which draft)").
+Docs: README.md beside this script (`cat "$(which draft)"` shows where that is).
 """
 import argparse
 import json
 import os
 import secrets
 import signal
-import socket
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -43,6 +43,10 @@ from view import DraftView, UnitCache   # noqa: E402
 # that no page is open and exits. The draft stays; `draft show` starts the server again.
 IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 60 * 60))
 WAIT_POLL_SECONDS = 1
+# The server rewrites server.json this often while it runs, and a file older than the stale
+# time means the server has gone without removing it (a crash, a kill, a power cut).
+BEAT_SECONDS = 5
+BEAT_STALE_SECONDS = 20
 # Claude not waiting for the page and its transcript untouched this long: its session has
 # probably ended, and the page offers to accept anyway.
 SESSION_GONE_SECONDS = 3 * 60
@@ -55,7 +59,14 @@ class DraftServer:
     saved and sent from here.
 
     Every POST must carry the server's token, which only the page it serves knows, so
-    another web page open in the browser can't post to it."""
+    another web page open in the browser can't post to it.
+
+    While it runs, the server keeps a heartbeat in the draft's server.json: its process id and
+    port, when it started, when a page last asked it for anything, and the time of the beat.
+    It removes the file as it exits. Every other draft command learns whether the server is up
+    by reading that file, never by signalling the process or connecting to its port. Claude
+    Code's Bash sandbox refuses both of those to a command run inside it, and reading a file
+    in the project is always allowed, so `draft answers --wait` and `draft list` work there."""
 
     def __init__(self, draft):
         self.p = draft
@@ -66,14 +77,30 @@ class DraftServer:
         self.token = secrets.token_urlsafe(24)
 
     @classmethod
-    def running(cls, draft):
+    def _heartbeat(cls, draft):
         try:
             info = json.load(open(os.path.join(draft.dir, "server.json")))
-            os.kill(info["pid"], 0)
-            with socket.create_connection(("127.0.0.1", info["port"]), timeout=1):
-                return info
-        except (OSError, ValueError, KeyError):
+            return info if "port" in info and "beat" in info else None
+        except (OSError, ValueError):
             return None
+
+    @classmethod
+    def running(cls, draft):
+        """The server's heartbeat (pid, port, started, seen, beat) while it is up, else None."""
+        info = cls._heartbeat(draft)
+        return info if info and time.time() - info["beat"] < BEAT_STALE_SECONDS else None
+
+    @classmethod
+    def stopped(cls, draft):
+        """True when the server has gone. A missing heartbeat says so at once: the server
+        removes it as it exits. An old one gets a second look after two beats, because a
+        machine waking from sleep finds the last beat as old as the sleep was long."""
+        if not cls._heartbeat(draft):
+            return True
+        if cls.running(draft):
+            return False
+        time.sleep(BEAT_SECONDS * 2)
+        return not cls.running(draft)
 
     @classmethod
     def launch(cls, draft):
@@ -81,7 +108,9 @@ class DraftServer:
         info = cls.running(draft)
         if not info:
             log = open(os.path.join(draft.dir, "server.log"), "a")
-            subprocess.Popen([os.path.realpath(__file__), "serve", draft.name],
+            # This Python, not the script's own `uv run` line: an installed draft has its
+            # environment in .venv and stays out of uv's cache (see install.sh).
+            subprocess.Popen([sys.executable, os.path.realpath(__file__), "serve", draft.name],
                              cwd=draft.root, stdout=log, stderr=log, start_new_session=True)
             for _ in range(100):
                 time.sleep(0.1)
@@ -223,16 +252,51 @@ class DraftServer:
 
         httpd = self.httpd = HTTPServer(("127.0.0.1", 0), Handler)
         httpd.timeout = 15
-        json.dump({"pid": os.getpid(), "port": httpd.server_address[1]}, open(self.info_path, "w"))
+        self.started = time.time()
+        self._beat()
+        # Its own thread: the loop below takes one request at a time, and a redraw of a large
+        # draft can hold it for longer than the stale time.
+        threading.Thread(target=self._keep_beating, daemon=True).start()
         signal.signal(signal.SIGTERM, lambda *a: sys.exit(0))
-        while server.p.exists() and time.time() - self.last_seen < IDLE_EXIT_SECONDS:
-            httpd.handle_request()
+        try:
+            while server.p.exists() and time.time() - self.last_seen < IDLE_EXIT_SECONDS:
+                httpd.handle_request()
+        finally:
+            self._remove_heartbeat()
+
+    def _beat(self):
+        """Write the heartbeat. Through a second file, so a reader never sees half of one."""
+        beat = {"pid": os.getpid(), "port": self.httpd.server_address[1], "started": self.started,
+                "seen": self.last_seen, "beat": time.time()}
+        try:
+            with open(self.info_path + ".new", "w") as f:
+                json.dump(beat, f)
+            os.replace(self.info_path + ".new", self.info_path)
+        except OSError:
+            pass    # the draft's folder has gone: the serve loop is about to end
+
+    def _keep_beating(self):
+        while True:
+            time.sleep(BEAT_SECONDS)
+            self._beat()
+
+    def _remove_heartbeat(self):
+        """Only this server's own: a later server for the same draft may have written since."""
+        try:
+            if json.load(open(self.info_path)).get("pid") == os.getpid():
+                os.remove(self.info_path)
+        except (OSError, ValueError):
+            pass
 
     @classmethod
     def stop(cls, draft):
         info = cls.running(draft)
         if info:
-            os.kill(info["pid"], signal.SIGTERM)
+            try:
+                os.kill(info["pid"], signal.SIGTERM)
+            except OSError:
+                pass    # refused in a sandbox, or already gone. The server also exits by
+                        # itself once the draft's folder is removed.
 
 
 class DraftCli:
@@ -363,7 +427,7 @@ class DraftCli:
             if not a.wait:
                 print("No answers waiting.")
                 return
-            if not DraftServer.running(p):
+            if DraftServer.stopped(p):
                 print(f"The page server stopped without answers. `draft show {p.name}` starts it again.")
                 return
             time.sleep(WAIT_POLL_SECONDS)
@@ -435,6 +499,15 @@ class DraftCli:
         p.drop()
         print(f"Dropped '{p.name}'.")
 
+    @staticmethod
+    def _server_state(live):
+        if not live:
+            return "server stopped"
+        quiet = (time.time() - live["seen"]) / 60
+        # An open page asks every 2 seconds, or about once a minute in a background tab.
+        page = "page open" if quiet < 3 else f"no page open for {quiet:.0f} min"
+        return f"page server on port {live['port']}, {page}"
+
     def cmd_list(self, a):
         drafts = Draft.all(self.root)
         for p in drafts:
@@ -442,7 +515,7 @@ class DraftCli:
             live = DraftServer.running(p)
             days = (time.time() - m.get("started", time.time())) / 86400
             age = f"{days:.0f} days old" if days >= 1 else "started today"
-            state = f"page server on port {live['port']}" if live else "server stopped"
+            state = self._server_state(live)
             print(f"{p.name}  {m.get('summary', '')}  ({age}, {state})")
         if not drafts:
             print("no drafts")
