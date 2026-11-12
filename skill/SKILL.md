@@ -78,6 +78,9 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    background: it returns when the user sends their answers from the page. While it runs, the
    page lets the user accept; while it doesn't, the page says you're working and holds
    accepting. So start it again as soon as each round of edits is finished, and not before.
+   That includes edits you make in answer to a chat message while it is still running: any
+   change to the draft or its notes holds accepting until you start it again, and the one
+   already running then ends by itself.
    Make each fix they asked for, and act on any note they put on a check they left: Leave
    keeps the draft as it is on that point, but the note is still a request (such as "raise a
    ticket for this"; ask before anything outward-facing). Update the notes with
@@ -99,7 +102,7 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    - `draft drop <name>` throws the draft away.
 
 `draft list` shows open drafts, their age, and whether the page server is running. The server
-stops 10 minutes after the last open page goes away. When the user returns to a draft, run
+stops an hour after the last open page goes away. When the user returns to a draft, run
 `draft show <name>` to start it again. `draft render <name> --out FILE` writes the page once,
 without the live server.
 

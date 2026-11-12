@@ -7,6 +7,7 @@ that, so three states can be compared:
 
     HEAD  ->  working tree (the user's current diff)  ->  draft (snapshot -> worktree)
 """
+import hashlib
 import json
 import os
 import re
@@ -342,13 +343,29 @@ class Draft:
         return sent
 
     # ---------- whether Claude is listening ----------
-    # `draft answers --wait` leaves waiting.json, with its process id, while it runs. Claude runs
-    # it whenever it has finished a round, so while no live wait is running Claude is working on
-    # the draft (or its session has ended), and the page holds back accepting.
+    # `draft answers --wait` leaves waiting.json while it runs, with its process id and the
+    # draft as it was when the wait started. Claude runs it whenever it has finished a round, so
+    # while no live wait is running Claude is working on the draft (or its session has ended),
+    # and the page holds back accepting. Claude also edits the draft in answer to chat messages,
+    # with the wait still running: a draft that no longer matches the one the wait started on
+    # is being worked on too, until Claude starts a new wait.
+
+    def draft_stamp(self):
+        """Changes whenever the draft does: its diff or Claude's notes. Not the user's own diff."""
+        h = hashlib.sha1(self.draft_patch().encode())
+        h.update(json.dumps(self.notes.data, sort_keys=True).encode())
+        return h.hexdigest()[:16]
 
     def mark_waiting(self):
         with open(self.waiting_path, "w") as f:
-            json.dump({"pid": os.getpid(), "since": time.time()}, f)
+            json.dump({"pid": os.getpid(), "since": time.time(), "draft": self.draft_stamp()}, f)
+
+    def wait_replaced(self):
+        """True for a `draft answers --wait` when a later one has taken over from it."""
+        try:
+            return json.load(open(self.waiting_path)).get("pid") != os.getpid()
+        except (OSError, ValueError):
+            return False
 
     def clear_waiting(self):
         try:
@@ -358,12 +375,14 @@ class Draft:
             pass
 
     def listening(self):
-        """True while a `draft answers --wait` for this draft is running."""
+        """True while a `draft answers --wait` for this draft is running, and the draft is
+        still as it was when that wait started."""
         try:
-            os.kill(json.load(open(self.waiting_path))["pid"], 0)
-            return True
+            waiting = json.load(open(self.waiting_path))
+            os.kill(waiting["pid"], 0)
         except (OSError, ValueError, KeyError):
             return False
+        return waiting.get("draft") == self.draft_stamp()
 
     def claude_idle_seconds(self):
         """Seconds since Claude's session transcript was last written, or None if it isn't found."""

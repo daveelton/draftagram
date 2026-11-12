@@ -98,9 +98,12 @@ chat is for what the page can't show, such as a build Claude ran.
   leave, replaces the buttons with "Send … to Claude". While Claude is working on the draft,
   the accept buttons are held, with "Claude is working" under them, so a half-made change
   can't be accepted. Claude counts as working whenever its `draft answers --wait` isn't
-  running: the wait leaves `waiting.json`, with its process id, in the draft's folder, and the
-  server refuses an accept while there's no live wait. Sending answers isn't held; they wait
-  for Claude's next round. If no wait is running and Claude's session transcript has been
+  running, or the draft has changed since that wait started (Claude also edits in answer to
+  chat messages, with the wait still running). The wait leaves `waiting.json` in the draft's
+  folder, with its process id and a stamp of the draft's diff and notes, and the server
+  refuses an accept unless that wait is alive and the stamp still matches. A new wait takes
+  over from one still running, which then ends. Sending answers isn't held; they wait
+  for Claude's next round. If Claude isn't waiting and Claude's session transcript has been
   quiet for 3 minutes, or can't be found, the session has probably ended, and the page offers
   "Accept anyway". Accepting is also refused if the draft changed after the page was drawn,
   so what is accepted is what you saw, and a commit takes only files the draft changed. Each commit takes
@@ -116,7 +119,7 @@ chat is for what the page can't show, such as a build Claude ran.
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
 reading changes. As Claude edits the worktree, the page follows.
 
-The server stops itself 10 minutes after the last open page goes away, and an open page then
+The server stops itself an hour after the last open page goes away, and an open page then
 says so. Run `draft show` to start it again. The draft itself stays until it's accepted or
 dropped. It costs only disk: a worktree without a build folder. `draft list` shows each draft's
 age and whether its server is running.

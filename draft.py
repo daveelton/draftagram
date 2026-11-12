@@ -37,10 +37,11 @@ from patch import Patch         # noqa: E402
 from draft_tree import Draft      # noqa: E402
 from view import DraftView, UnitCache   # noqa: E402
 
-# An open page polls every 2 seconds (about once a minute when Chrome throttles a background
-# tab), so this long without a request means no page is open: the server exits. The draft
-# stays; `draft show` starts the server again.
-IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 10 * 60))
+# An open page polls every 2 seconds, about once a minute when Chrome throttles a background
+# tab, and not at all once the browser freezes a tab left in the background, as it can during
+# a long review in the IDE. So the server allows an hour without a request before it takes it
+# that no page is open and exits. The draft stays; `draft show` starts the server again.
+IDLE_EXIT_SECONDS = int(os.environ.get("DRAFT_IDLE_SECONDS", 60 * 60))
 WAIT_POLL_SECONDS = 1
 # Claude not waiting for the page and its transcript untouched this long: its session has
 # probably ended, and the page offers to accept anyway.
@@ -317,7 +318,8 @@ class DraftCli:
         # until Claude takes it, so a named draft is looked up by that too.
         named = Draft(self.root, a.name) if a.name else None
         p = named if named and os.path.exists(named.outcome_path) else Draft.find(self.root, a.name)
-        # While this waits, Claude is listening, and the page lets the user accept.
+        # While this waits and the draft stays as it is now, Claude is listening, and the page
+        # lets the user accept.
         if a.wait and p.exists():
             p.mark_waiting()
         try:
@@ -351,6 +353,9 @@ class DraftCli:
                 if answered:
                     print("Their answers to your checks, given with the accept:")
                     self._print_answers(answered)
+                return
+            if a.wait and p.wait_replaced():
+                print(f"A later `draft answers {p.name} --wait` has taken over from this one.")
                 return
             sent = p.take_sent()
             if sent:
