@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- The scripted chat for the README's first animation. record.py plays and captures it. -->
+<meta charset="utf-8">
+<title>Draftagram chat</title>
+<style>
+  :root { --bg:#1f1e1d; --panel:#2a2927; --line:#3c3a37; --text:#ece9e2; --dim:#a39f96; --accent:#3b82f6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); width:900px; height:520px; overflow:hidden;
+         font:17px/1.45 -apple-system, "Helvetica Neue", sans-serif; position:relative; }
+  #chat { position:absolute; left:40px; right:40px; top:28px; bottom:104px; display:flex;
+          flex-direction:column; justify-content:flex-end; gap:16px; }
+  .user { align-self:flex-end; background:var(--panel); border-radius:14px; padding:10px 16px; max-width:80%; }
+  .claude { align-self:flex-start; max-width:86%; }
+  .claude .who, .card .who { color:var(--dim); font-size:13px; margin-bottom:3px; }
+  .card { border:1px solid var(--line); border-radius:14px; overflow:hidden; background:#242321; }
+  .card .q { padding:14px 18px; background:var(--panel); }
+  .opt { display:flex; gap:12px; padding:11px 18px; border-top:1px solid var(--line); align-items:flex-start; }
+  .opt .radio { flex:none; width:18px; height:18px; border-radius:50%; border:2px solid #77736b; margin-top:3px; }
+  .opt.on .radio { border-color:var(--accent); background:radial-gradient(#fff 0 32%, var(--accent) 36%); }
+  .opt small { display:block; color:var(--dim); font-size:14px; }
+  .foot { display:flex; justify-content:flex-end; padding:10px 18px; border-top:1px solid var(--line); }
+  .btn { background:#ece9e2; color:#1f1e1d; border-radius:9px; padding:5px 16px; font-weight:600; font-size:15px; }
+  .btn.down { background:#bdb9b0; }
+  #input { position:absolute; left:40px; right:40px; bottom:28px; height:56px; border:1px solid var(--line);
+           border-radius:16px; background:var(--panel); padding:14px 18px; }
+  #input .ph { color:#77736b; }
+  #caret { display:inline-block; width:2px; height:20px; background:var(--text); vertical-align:-4px;
+           margin-left:1px; animation:blink 1s steps(1) infinite; }
+  @keyframes blink { 50% { opacity:0; } }
+  .dots span { display:inline-block; width:7px; height:7px; border-radius:50%; background:var(--dim);
+               margin-right:5px; animation:pulse 1s infinite; }
+  .dots span:nth-child(2) { animation-delay:.15s; } .dots span:nth-child(3) { animation-delay:.3s; }
+  @keyframes pulse { 0%,100% { opacity:.25; } 50% { opacity:1; } }
+  .fade { animation:fade .25s ease-out; }
+  @keyframes fade { from { opacity:0; transform:translateY(6px); } }
+  code { font:15px ui-monospace, Menlo, monospace; color:#c9b8ff; }
+  #cursor { position:absolute; left:620px; top:560px; width:20px; height:20px; z-index:9;
+            transition:left .7s ease-in-out, top .7s ease-in-out; }
+</style>
+<body>
+<div id="chat"></div>
+<div id="input"><span id="typed"></span><span id="caret"></span></div>
+<svg id="cursor" viewBox="0 0 20 20"><path d="M3 2l13 7-6 1.6L7.6 17z" fill="#fff" stroke="#000" stroke-width="1.2"/></svg>
+<script>
+class ChatAnimation {
+  constructor() {
+    this.chat = document.getElementById('chat');
+    this.typed = document.getElementById('typed');
+    this.cursor = document.getElementById('cursor');
+  }
+  sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+  add(html, cls) {
+    const d = document.createElement('div');
+    d.className = cls + ' fade';
+    d.innerHTML = html;
+    this.chat.appendChild(d);
+    return d;
+  }
+  moveCursorTo(el) {
+    const r = el.getBoundingClientRect();
+    this.cursor.style.left = (r.left + r.width / 2) + 'px';
+    this.cursor.style.top = (r.top + r.height / 2) + 'px';
+    return this.sleep(800);
+  }
+  async typeWords(text) {
+    for (const word of text.split(' ')) {
+      this.typed.textContent += (this.typed.textContent ? ' ' : '') + word;
+      await this.sleep(190);
+    }
+  }
+  async play() {
+    await this.sleep(700);
+    const prompt = '/draft add a bypass switch to the tone control';
+    await this.typeWords(prompt);
+    await this.sleep(600);
+    this.typed.textContent = '';
+    this.add(prompt, 'user');
+    const dots = this.add('<div class="dots"><span></span><span></span><span></span></div>', 'claude');
+    await this.sleep(1400);
+    dots.remove();
+    const card = this.add(
+      '<div class="q">Where should this draft be made?</div>' +
+      '<div class="opt"><div class="radio"></div><div>In my source tree (Recommended)' +
+      '<small>See it in your IDE, and build and test it, while you review.</small></div></div>' +
+      '<div class="opt"><div class="radio"></div><div>In a separate worktree' +
+      '<small>Your source tree stays as it is until you accept.</small></div></div>' +
+      '<div class="foot"><div class="btn">Submit</div></div>', 'card');
+    await this.sleep(900);
+    const first = card.querySelector('.opt');
+    await this.moveCursorTo(first.querySelector('.radio'));
+    first.classList.add('on');
+    await this.sleep(500);
+    const submit = card.querySelector('.btn');
+    await this.moveCursorTo(submit);
+    submit.classList.add('down');
+    await this.sleep(250);
+    card.remove();
+    this.cursor.style.top = '560px';
+    this.add('In my source tree', 'user');
+    const dots2 = this.add('<div class="dots"><span></span><span></span><span></span></div>', 'claude');
+    await this.sleep(1600);
+    dots2.remove();
+    this.add('The draft <code>bypass</code> is open in your browser. Its Overview explains the change.', 'claude');
+    await this.sleep(3000);
+    window.animationDone = true;
+  }
+}
+window.startAnimation = () => new ChatAnimation().play();
+</script>

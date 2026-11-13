@@ -1,11 +1,32 @@
-# draftagram: the `draft` tool
+# Draftagram: draft and understand code with diagrams
 
-See a change Claude drafts as a class diagram and code diffs, side by side, before you
-accept it. The idea comes from Together's simultaneous round-trip engineering:
-the diagram is never a separate model, it's drawn from the code each time. So what you
-review is the code Claude actually wrote, drawn two ways, not Claude's description of it.
+**See what Claude is about to change in your C++ code, as a class diagram, before it lands.**
 
-Run from Claude with the `/draft` skill (`skill/SKILL.md`), or by hand with `draft --help`.
+Ask Claude Code for a change with `/draft`, and say where to draft it:
+
+![Asking Claude for a draft: the request, the question of where to make it, and the draft ready](docs/animations/chat.gif)
+
+A page opens in your browser with the change drawn on it. Read a summary of the change, see
+the diff and navigate the code:
+
+![The draft's page: a class diagram beside the summary, the diff and the code](docs/animations/page.gif)
+
+- **The shape of the change at a glance.** A class diagram of the code Claude read and
+  changed: green for added, red for removed, amber for changed.
+- **The code one click away.** Click a class or a member and its diff opens beside the
+  diagram.
+- **Nothing lands until you say so.** Accept, commit and push from the page, or drop the
+  draft and your checkout is as it was.
+- **Try it before you accept it.** Make the draft in your checkout and you can build and
+  test it while you review.
+- **Claude asks, you decide.** Where Claude isn't sure, the page asks you, with a Fix and a
+  Leave button.
+
+The diagram is drawn from the code each time, never kept as a separate model. So what you
+review is the code Claude actually wrote, not Claude's description of it.
+
+For macOS, Claude Code and C++ projects built with CMake. Run from Claude with the `/draft`
+skill (`skill/SKILL.md`), or by hand with `draft --help`.
 
 ## Install
 
@@ -271,6 +292,13 @@ draft drop demo
 The same with `--in-place`, editing the checkout: `draft scope` and the page show the same,
 and after `draft drop demo`, `git status` is as it was before `draft start`. `draft start
 demo` with neither flag prints the question and exits with status 2.
+
+## Where the idea comes from
+
+A few of you might remember TogetherSoft and Rational Rose. Round-tripping between code and
+diagrams was a quick way to understand code then, and we are now responsible for more code
+than ever before.
+
 ## Licence
 
 MIT, copyright UrsaDSP / Perambulum Ltd. See `LICENSE`.
