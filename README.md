@@ -270,7 +270,7 @@ Parsing details that matter:
   (a worktree per repo, submodule commits first, then the parent's pointer commit, and
   pushes in that order) aren't built.
 
-Ideas not yet built, with their reasoning, are in `future-ideas.md`.
+Ideas not yet built, and known issues, are listed in `future-ideas.md`.
 
 ## Open: leftover drafts
 
