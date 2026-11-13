@@ -637,6 +637,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
 #actions {{ flex:none; background:{p.PANEL}; padding:4px 10px 8px; max-height:55vh; overflow:auto; box-sizing:border-box; }}
 #actions.sized {{ max-height:none; }}
 #actions .row {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:6px; }}
+#actions .row[hidden] {{ display:none; }}   /* display:flex above would otherwise override the hidden attribute */
 #actions button {{ padding:4px 10px; cursor:pointer; }}
 #message summary {{ cursor:pointer; color:{p.DIM}; }} #message summary b {{ color:{p.TEXT}; font-weight:600; }}
 .commit {{ display:grid; grid-template-columns:1fr auto; gap:4px 8px; margin:6px 0; padding:8px; background:{p.BG}; border:1px solid {p.BORDER}; }}
