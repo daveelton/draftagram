@@ -79,3 +79,48 @@ telling.
 **Not possible.** Embedding the app's own chat in the page: the page is a local web page and
 has no way to host the app's conversation. Only an echo (4) or a separate route (3) can put
 conversation there.
+
+## Known issue: the wait fails on a git lock, and the page doesn't open
+
+**What happens.** Straight after `draft show`, the background `draft answers <name> --wait`
+exits with code 1 and this message, and the page doesn't open in the browser:
+
+```
+git add -A failed:
+fatal: Unable to create '<project>/temp/draft/<name>/index.lock': File exists.
+
+Another git process seems to be running in this repository, or the lock file may be stale
+```
+
+Seen in a session on a large project in place (13 Nov 2026), and
+the user has seen it before. The lock file was gone two seconds later, and a second
+`draft answers --wait` then ran normally. `draft list` reported "page server on port 59330,
+page open" throughout, although the user had no page.
+
+**What is known.** The lock is on the draft's own index (`Draft.index_path`, used through
+`GIT_INDEX_FILE` for an in-place draft), not the project's. Two draft processes were running
+at that moment: the page server started by `draft show`, and the wait. Both stage the tree
+with `git add -A` to work out the draft's diff, so the likely cause is the two meeting on
+that index. `git()` in `draft_tree.py` treats any git failure as fatal, so the one that
+loses exits.
+
+**What isn't known.** Why the page didn't open. The server was up and answering, so either
+the browser was never asked to open it, or the server's first request hit the same lock and
+the page was left in a state the browser showed as nothing. Nor is it known whether a
+worktree draft can hit this: it has no index of its own, but two processes still run git in
+the same worktree.
+
+**Candidate fixes, smallest first.**
+
+1. *Try again.* In `git()`, when stderr names `index.lock`, wait a moment and retry a few
+   times before giving up. The lock is held for well under a second.
+2. *One process stages.* Only the server runs `git add -A` on the draft's index; the wait
+   asks the server for the stamp it needs, as it already asks it for the answers.
+3. *Say what to do.* Until one of those is built, the wait's message could say that the lock
+   is the draft's own and that running the command again is safe. Claude restarts it either
+   way, but the user sees a failed background command with no explanation.
+
+**To check when fixing.** Reproduce it first: start an in-place draft in a large repository,
+where `git add -A` takes long enough to overlap (its index is 600 KB), and run
+`draft show` and `draft answers --wait` back to back. Then find out what the page server did
+with the request that failed, which is the part that explains the page not opening.
