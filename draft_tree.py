@@ -1,11 +1,22 @@
-"""One draft: Claude's change, made in a scratch git worktree so the user's checkout is
-untouched until they accept it.
+"""One draft: Claude's change, kept apart from the user's own until they accept it.
 
-The worktree's branch has one commit on top of HEAD, the *snapshot*: the user's uncommitted
-changes (tracked and untracked) when the draft started. Claude edits the worktree after
-that, so three states can be compared:
+A draft is made in one of two places, chosen when it starts (its *mode*):
 
-    HEAD  ->  working tree (the user's current diff)  ->  draft (snapshot -> worktree)
+- **worktree:** a scratch git worktree, so the user's checkout is untouched until they
+  accept. Its branch has one commit on top of HEAD, the *snapshot*: the user's uncommitted
+  changes (tracked and untracked) when the draft started. Claude edits the worktree.
+- **in-place:** the checkout itself, so the user can see the draft in their IDE and build
+  and test it. The snapshot is a commit made without touching the checkout or the user's
+  staging, kept alive by the ref refs/draft/<name>. Claude edits the checkout, and dropping
+  the draft puts the checkout back to the snapshot.
+
+Either way three states can be compared:
+
+    HEAD  ->  snapshot (the user's own diff)  ->  draft (Claude's change)
+
+In a worktree draft the user's diff is read live from the checkout, which they may go on
+editing. In place it is fixed at the snapshot, and anything edited in the checkout after
+that, by Claude or the user, is the draft.
 """
 import hashlib
 import json
@@ -19,10 +30,11 @@ from notes import Notes
 from reads import ReadLog
 
 SLUG = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+WORKTREE, IN_PLACE = "worktree", "in-place"
 
 
-def git(cwd, *args, check=True, input=None):
-    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, input=input)
+def git(cwd, *args, check=True, input=None, env=None):
+    r = subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, input=input, env=env)
     if check and r.returncode != 0:
         raise SystemExit(f"git {' '.join(args)} failed:\n{r.stderr.strip()}")
     return r.stdout
@@ -35,8 +47,11 @@ class Draft:
         self.root = root
         self.name = name
         self.dir = os.path.join(root, "temp", "draft", name)
-        self.tree = os.path.join(self.dir, "tree")
-        self.branch = f"draft/{name}"
+        self.scratch = os.path.join(self.dir, "tree")   # a worktree draft's worktree
+        self.branch = f"draft/{name}"                   # and its branch
+        self.index_path = os.path.join(self.dir, "index")   # an in-place draft's own git index
+        self.ref = f"refs/draft/{name}"                      # and what keeps its snapshot
+        self._mode = None
         self.meta_path = os.path.join(self.dir, "meta.json")
         self.scope_path = os.path.join(self.dir, "scope.json")
         self.notes_path = os.path.join(self.dir, "notes.json")
@@ -45,6 +60,37 @@ class Draft:
         # What happened when the page accepted the draft. Beside the draft's folder, not in it,
         # since accepting removes the folder; `draft answers --wait` reports it to Claude.
         self.outcome_path = os.path.join(root, "temp", "draft", f"{name}.outcome.json")
+        # The change an in-place draft held when it was dropped, kept so a drop can be undone.
+        self.dropped_path = os.path.join(root, "temp", "draft", f"{name}.dropped.patch")
+
+    # ---------- where the draft is made ----------
+
+    @property
+    def mode(self):
+        if self._mode is None:
+            self._mode = self.meta.get("mode", WORKTREE)
+        return self._mode
+
+    @property
+    def in_place(self):
+        return self.mode == IN_PLACE
+
+    @property
+    def tree(self):
+        """The folder Claude edits: the checkout itself, or the draft's worktree."""
+        return self.root if self.in_place else self.scratch
+
+    def _tree_git(self, *args, **kw):
+        """git in the draft's tree. In place, it runs with the draft's own index, so staging
+        the draft to diff it leaves what the user has staged alone."""
+        env = {**os.environ, "GIT_INDEX_FILE": self.index_path} if self.in_place else None
+        return git(self.tree, *args, env=env, **kw)
+
+    def _changed(self, rev):
+        """[(status, path)] of what differs between `rev` and the draft's tree as it is now."""
+        self._tree_git("add", "-A")
+        out = self._tree_git("diff", "--cached", "--name-status", "--no-renames", rev)
+        return [tuple(l.split("\t", 1)) for l in out.splitlines() if "\t" in l]
 
     # ---------- finding drafts ----------
 
@@ -92,57 +138,111 @@ class Draft:
         headline = f" {headline}." if headline else ""
         where = ('"Since your last review" on its Overview says what changed'
                  if self.notes.data.get("sinceLastReview") else "Its Overview explains the change")
+        checkout = ("The draft is in your checkout, so you can see it in the IDE and build and "
+                    "test it; dropping it puts the checkout back as it was."
+                    if self.in_place else "Nothing in the checkout has changed.")
         return (f"Say this to the user, and nothing else about the draft:\n"
                 f'  The draft "{self.name}" is open at {url}.{headline} {where}, so read on '
                 f"there. "
-                f"Nothing in the checkout has changed.\n"
+                f"{checkout}\n"
                 f"The page tells the user about the draft; don't retell the problem, the change, "
                 f"the checks or the notes in the chat or in a recap. Add only what the page can't "
                 f"show, such as something you built or ran outside the draft.")
 
     # ---------- lifecycle ----------
 
-    def start(self, session_id, summary=""):
-        """Make the worktree at HEAD plus the user's uncommitted changes."""
+    @staticmethod
+    def checkout_changes(root):
+        """The checkout's uncommitted changes as [(git's status letters, path)]; "??" is a
+        file git doesn't track yet."""
+        out = git(root, "status", "--porcelain", "--untracked-files=all")
+        return [(l[:2], l[3:]) for l in out.splitlines() if not l[3:].startswith("temp/")]
+
+    def in_the_way(self, mode):
+        """Why a draft can't start in `mode` (None: not chosen yet) beside the drafts already
+        open, or None if it can. An in-place draft needs the checkout to itself: a second
+        draft would take the first one's edits as part of the user's own changes."""
+        others = [d for d in Draft.all(self.root) if d.name != self.name]
+        held = [d.name for d in others if d.in_place]
+        if held:
+            return (f"draft '{held[0]}' is open in place, in the checkout itself: "
+                    f"accept or drop it before starting another")
+        if mode == IN_PLACE and others:
+            return ("a draft in place needs the checkout to itself, and these are open: "
+                    + ", ".join(d.name for d in others) + ". Finish them, or use --worktree")
+        return None
+
+    def start(self, session_id, mode, summary=""):
+        """Start the draft from HEAD plus the user's uncommitted changes, in a worktree or in
+        the checkout itself."""
         if self.exists():
             raise SystemExit(f"draft '{self.name}' already exists: {self.tree}")
+        blocked = self.in_the_way(mode)
+        if blocked:
+            raise SystemExit(blocked)
+        self._mode = mode
         self._ensure_temp_ignored()
-        if os.path.exists(self.outcome_path):
-            os.remove(self.outcome_path)    # from an earlier draft of the same name
+        for left_over in (self.outcome_path, self.dropped_path):    # from an earlier draft of the same name
+            if os.path.exists(left_over):
+                os.remove(left_over)
         head = git(self.root, "rev-parse", "HEAD").strip()
         os.makedirs(self.dir, exist_ok=True)
-        git(self.root, "worktree", "add", "-q", "-b", self.branch, self.tree, head)
-        patch = git(self.root, "diff", "HEAD", "--binary")
-        if patch.strip():
-            git(self.tree, "apply", "--whitespace=nowarn", input=patch)
-        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
-            if f:
-                dst = os.path.join(self.tree, f)
-                os.makedirs(os.path.dirname(dst), exist_ok=True)
-                shutil.copy2(os.path.join(self.root, f), dst)
-        git(self.tree, "add", "-A")
-        git(self.tree, "-c", "user.name=draft", "-c", "user.email=draft@localhost",
-            "commit", "-q", "--allow-empty", "--no-verify", "-m",
-            "Snapshot of the working tree the draft starts from")
-        snapshot = git(self.tree, "rev-parse", "HEAD").strip()
-        json.dump({"name": self.name, "head": head, "snapshot": snapshot,
+        snapshot = self._snapshot_checkout(head) if self.in_place else self._make_worktree(head)
+        json.dump({"name": self.name, "mode": mode, "head": head, "snapshot": snapshot,
                    "session": session_id, "summary": summary, "started": time.time()},
                   open(self.meta_path, "w"), indent=2)
         json.dump({"expanded": []}, open(self.scope_path, "w"))
 
+    SNAPSHOT_MESSAGE = "Snapshot of the working tree the draft starts from"
+    AS_DRAFT = ("-c", "user.name=draft", "-c", "user.email=draft@localhost")
+
+    def _make_worktree(self, head):
+        """A worktree at HEAD with the user's uncommitted changes committed on top."""
+        git(self.root, "worktree", "add", "-q", "-b", self.branch, self.scratch, head)
+        patch = git(self.root, "diff", "HEAD", "--binary")
+        if patch.strip():
+            git(self.scratch, "apply", "--whitespace=nowarn", input=patch)
+        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if f:
+                dst = os.path.join(self.scratch, f)
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                shutil.copy2(os.path.join(self.root, f), dst)
+        git(self.scratch, "add", "-A")
+        git(self.scratch, *self.AS_DRAFT, "commit", "-q", "--allow-empty", "--no-verify", "-m",
+            self.SNAPSHOT_MESSAGE)
+        return git(self.scratch, "rev-parse", "HEAD").strip()
+
+    def _snapshot_checkout(self, head):
+        """Commit the checkout as it is, without changing it or what the user has staged."""
+        # The draft's index starts as a copy of the user's. That brings git's record of which
+        # files are unchanged, so staging the whole tree doesn't read every file again.
+        user_index = os.path.join(self.root, git(self.root, "rev-parse", "--git-path", "index").strip())
+        if os.path.exists(user_index):
+            shutil.copy2(user_index, self.index_path)
+        else:
+            self._tree_git("read-tree", head)
+        self._tree_git("add", "-A")
+        tree = self._tree_git("write-tree").strip()
+        snapshot = git(self.root, *self.AS_DRAFT, "commit-tree", tree, "-p", head, "-m",
+                       self.SNAPSHOT_MESSAGE).strip()
+        git(self.root, "update-ref", self.ref, snapshot)    # or git's clean-up could remove it
+        return snapshot
+
     def accept(self):
-        """Apply the draft to the user's checkout as uncommitted changes, then drop it."""
+        """Leave the draft in the user's checkout as uncommitted changes, and close it. A
+        worktree draft is applied to the checkout first; one made in place is already there."""
         patch = self.draft_patch(binary=True)
         if not patch.strip():
             raise SystemExit("the draft has no changes")
-        r = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn"], cwd=self.root,
-                           input=patch, capture_output=True, text=True)
-        if r.returncode != 0:
-            raise SystemExit("the checkout has changed under the draft; it doesn't apply:\n"
-                             + r.stderr.strip())
-        git(self.root, "apply", "--whitespace=nowarn", input=patch)
-        files = git(self.tree, "diff", "--cached", "--name-only", self.meta["snapshot"]).split()
-        self.drop()
+        if not self.in_place:
+            r = subprocess.run(["git", "apply", "--check", "--whitespace=nowarn"], cwd=self.root,
+                               input=patch, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise SystemExit("the checkout has changed under the draft; it doesn't apply:\n"
+                                 + r.stderr.strip())
+            git(self.root, "apply", "--whitespace=nowarn", input=patch)
+        files = self._tree_git("diff", "--cached", "--name-only", self.meta["snapshot"]).split()
+        self._remove()
         return files
 
     def commit(self, commits, push):
@@ -195,8 +295,40 @@ class Draft:
             os.remove(self.outcome_path)
 
     def drop(self):
-        git(self.root, "worktree", "remove", "--force", self.tree, check=False)
+        """Throw the draft away. In place, that puts the checkout back as it was when the
+        draft started, and the change taken out is kept as a patch: returns its path, or None
+        if there was nothing to keep."""
+        kept = self._restore_checkout() if self.exists() and self.in_place else None
+        self._remove()
+        return kept
+
+    def _restore_checkout(self):
+        """Put the checkout back to the snapshot. The user may have edited it too while the
+        draft was open, and those edits go with the draft, so the whole change is saved first."""
+        patch = self.draft_patch(binary=True)
+        if not patch.strip():
+            return None
+        with open(self.dropped_path, "w") as f:
+            f.write(patch)
+        snapshot = self.meta["snapshot"]
+        changed = self._changed(snapshot)
+        back = [f for status, f in changed if status != "A"]
+        if back:
+            self._tree_git("checkout", snapshot, "--", *back)
+        for status, f in changed:
+            if status == "A":       # a file the draft added
+                os.remove(os.path.join(self.root, f))
+                folder = os.path.dirname(f)
+                while folder and not os.listdir(os.path.join(self.root, folder)):
+                    os.rmdir(os.path.join(self.root, folder))
+                    folder = os.path.dirname(folder)
+        return self.dropped_path
+
+    def _remove(self):
+        """Remove the draft's records, whichever mode it was in. The checkout isn't touched."""
+        git(self.root, "worktree", "remove", "--force", self.scratch, check=False)
         git(self.root, "branch", "-D", self.branch, check=False)
+        git(self.root, "update-ref", "-d", self.ref, check=False)
         shutil.rmtree(self.dir, ignore_errors=True)
 
     def _ensure_temp_ignored(self):
@@ -209,15 +341,18 @@ class Draft:
 
     def draft_patch(self, binary=False, context=3, whole=False):
         """The draft's diff. `whole` shows the whole function around each change."""
-        git(self.tree, "add", "-A")
+        self._tree_git("add", "-A")
         args = ["diff", "--cached", f"-U{context}", self.meta["snapshot"]]
         args += ["--binary"] if binary else []
         args += ["--function-context"] if whole else []
-        return git(self.tree, *args)
+        return self._tree_git(*args)
 
     def current_patch(self, context=3, whole=False):
-        """The user's uncommitted diff, untracked files included as additions."""
+        """The user's uncommitted diff, untracked files included as additions. For a draft
+        made in place, it is their diff as it was when the draft started."""
         extra = ["--function-context"] if whole else []
+        if self.in_place:
+            return git(self.root, "diff", f"-U{context}", *extra, self.meta["head"], self.meta["snapshot"])
         out = git(self.root, "diff", f"-U{context}", *extra, "HEAD")
         for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
             if f and not f.startswith("temp/"):
@@ -227,38 +362,43 @@ class Draft:
         return out
 
     def state_files(self):
-        """Overrides for each state, as {path in the checkout: text, or None if the file
-        doesn't exist in that state}. Paths are always the checkout's, so all states parse
-        with the same compile flags."""
+        """Overrides for the three states (HEAD, the user's own changes, the draft), each as
+        {path in the checkout: text, or None if the file doesn't exist in that state}. A file
+        with no override is read from the checkout. Paths are always the checkout's, so all
+        states parse with the same compile flags."""
         head, snap = self.meta["head"], self.meta["snapshot"]
-
-        def changed(cwd, *rev):
-            out = git(cwd, "diff", "--name-status", "--no-renames", *rev)
-            return [l.split("\t", 1) for l in out.splitlines() if "\t" in l]
 
         def show(rev, f):
             r = subprocess.run(["git", "show", f"{rev}:{f}"], cwd=self.root, capture_output=True,
                                text=True, errors="replace")
             return r.stdout if r.returncode == 0 else None
 
-        head_state = {}
-        for status, f in changed(self.root, "HEAD"):
-            head_state[os.path.join(self.root, f)] = None if status == "A" else show(head, f)
-        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
-            if f:
-                head_state[os.path.join(self.root, f)] = None
+        def before(changes, rev):
+            """The files of `changes` as they were at `rev`."""
+            return {os.path.join(self.root, f): None if status == "A" else show(rev, f)
+                    for status, f in changes}
 
-        git(self.tree, "add", "-A")
+        drafted = self._changed(snap)
         draft_state = {}
-        for status, f in changed(self.tree, "--cached", snap):
+        for status, f in drafted:
             p = os.path.join(self.tree, f)
             draft_state[os.path.join(self.root, f)] = \
                 None if status == "D" else open(p, errors="replace").read()
-        return head_state, draft_state
+
+        if self.in_place:
+            # The checkout holds the draft, so the user's own state is the snapshot.
+            return before(self._changed(head), head), before(drafted, snap), draft_state
+
+        out = git(self.root, "diff", "--name-status", "--no-renames", "HEAD")
+        head_state = before([l.split("\t", 1) for l in out.splitlines() if "\t" in l], head)
+        for f in git(self.root, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if f:
+                head_state[os.path.join(self.root, f)] = None
+        return head_state, {}, draft_state
 
     def to_checkout_path(self, path):
         """A worktree path as the same file in the checkout."""
-        prefix = self.tree + os.sep
+        prefix = self.scratch + os.sep
         return os.path.join(self.root, path[len(prefix):]) if path.startswith(prefix) else path
 
     # ---------- Claude's notes ----------

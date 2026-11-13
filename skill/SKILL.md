@@ -1,6 +1,6 @@
 ---
 name: draft
-description: Show a code change as a live class diagram plus diffs before it lands, so the user reviews the API shape, not a text description. Claude makes the change in a scratch git worktree, `draft show` opens a page drawing the classes Claude read and changed (coloured by change, beside the draft's diff and the user's own uncommitted diff), and the user accepts or drops it. Use when the user invokes /draft, or asks to see or review a C++ change before it's made or committed.
+description: Show a code change as a live class diagram plus diffs before it lands, so the user reviews the API shape, not a text description. Claude makes the change in a scratch git worktree, or in the checkout itself so the user can build and test it, `draft show` opens a page drawing the classes Claude read and changed (coloured by change, beside the draft's diff and the user's own uncommitted diff), and the user accepts or drops it. Use when the user invokes /draft, or asks to see or review a C++ change before it's made or committed.
 ---
 
 # Draft a change, shown as a diagram
@@ -16,8 +16,8 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
   research the code it touches.
 - **Without arguments, mid-discussion:** draft the change the conversation has arrived at.
   Your reading so far already counts toward the diagram. Read anything else it depends on.
-- **Two ways to do it:** make two drafts with different names. Each gets its own page, so
-  the user can compare the two shapes.
+- **Two ways to do it:** make two drafts with different names, both with `--worktree`.
+  Each gets its own page, so the user can compare the two shapes.
 
 ## Steps
 
@@ -27,14 +27,29 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    would show the user a gap in your picture.
 2. **Start the draft** from the project's checkout:
    `draft start <short-name> --summary "<one line, in the user's words>"`.
-   It prints a worktree path: the checkout as it is now, uncommitted changes included.
-   A draft covers one repository. In a project with submodules, the draft's submodule
-   folders are empty, so a change inside a submodule can't be made there. If the change
-   needs files in a submodule, tell the user before starting, and draft each repository
-   separately (the submodule's draft is started from its own folder).
-3. **Make the change only inside that worktree.** Never edit the checkout while a draft
-   is open. The worktree has no build folder. Leave building until the change is accepted,
-   unless the user asks for a build check.
+   A draft is made in one of two places, and the user chooses:
+   - `--worktree`: a scratch worktree holding the checkout as it is now, uncommitted
+     changes included. The checkout isn't touched until the user accepts.
+   - `--in-place`: the checkout itself, so the user can see the draft in their IDE and build
+     and test it while they review. Dropping the draft puts the checkout back.
+   If the user's request says which ("draft this in place", "in a worktree"), pass that
+   flag. Otherwise run it with neither: it starts nothing, and prints the uncommitted
+   changes in the checkout and the question to ask, with the option to recommend. Ask it
+   with AskUserQuestion as printed, then run `draft start` again with the flag for the answer.
+   Don't choose for the user, even when the recommendation looks obvious.
+   A draft covers one repository. In a worktree draft of a project with submodules, the
+   submodule folders are empty, and in place a change inside a submodule doesn't show in the
+   draft. If the change needs files in a submodule, tell the user before starting, and draft
+   each repository separately (the submodule's draft is started from its own folder).
+3. **Make the change only where `draft start` says.**
+   - **Worktree:** only inside the printed worktree. Never edit the checkout while the draft
+     is open. The worktree has no build folder. Leave building until the change is accepted,
+     unless the user asks for a build check.
+   - **In place:** in the checkout. Everything that changes there while the draft is open
+     counts as the draft, so change only what belongs to it, and never stage, commit, stash
+     or check out files in the checkout: the user's uncommitted work is there too. The user
+     may build and test at any time, so say in the chat when a round of edits is finished
+     and the tree is whole again. Build it yourself only if asked.
 4. **Write notes for the page** and store them with `draft notes <name> --file <json>`
    (`draft notes --format` shows what they hold). The diagram and diffs show what changed;
    the notes say why, in plain words: the problem in a sentence or two, what the draft does
@@ -88,7 +103,7 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
 7. **Before you reply to any feedback, run `draft scope <name>`.** It also says if answers
    from the page are waiting (`draft answers` prints them). If it lists classes
    under "ADDED BY THE USER, NOT READ YET", the user added them from the diagram. Read them
-   (with line ranges) before revising, then revise in the worktree. The page follows.
+   (with line ranges) before revising, then revise where the draft is made. The page follows.
 8. **Finish when the user decides:**
    - The user may accept from the page, with or without committing and pushing your
      suggested commits. `draft answers --wait` then returns saying what was accepted,
@@ -96,10 +111,13 @@ and its docs are in the draftagram repo it was installed from (README.md; `readl
    - After commits are made, finish what step 5 left for later: show the user the ticket
      update you wrote, with the commit hashes, and post it when they agree. Posting is
      outward-facing, so it always waits for their go-ahead.
-   - `draft accept <name>` applies the change to the checkout as uncommitted edits and
-     removes the worktree. Build it if the project has a build, and report the result. Don't
-     commit unless asked.
-   - `draft drop <name>` throws the draft away.
+   - `draft accept <name>` leaves the change in the checkout as uncommitted edits and closes
+     the draft (a worktree draft is applied to the checkout and its worktree removed). Build
+     it if the project has a build, and report the result. Don't commit unless asked.
+   - `draft drop <name>` throws the draft away. For a draft in place that changes the
+     checkout: every file goes back to how it was when the draft started, including anything
+     the user edited meanwhile. So drop one only when the user says to. The change taken out
+     is kept as a patch, and `draft drop` prints where; tell the user.
 
 `draft list` shows open drafts, their age, and whether the page server is running. The server
 stops an hour after the last open page goes away. When the user returns to a draft, run

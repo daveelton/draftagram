@@ -1,7 +1,7 @@
 # draftagram: the `draft` tool
 
-See a change Claude drafts as a class diagram and code diffs, side by side, before it
-lands in the checkout. The idea comes from Together's simultaneous round-trip engineering:
+See a change Claude drafts as a class diagram and code diffs, side by side, before you
+accept it. The idea comes from Together's simultaneous round-trip engineering:
 the diagram is never a separate model, it's drawn from the code each time. So what you
 review is the code Claude actually wrote, drawn two ways, not Claude's description of it.
 
@@ -39,13 +39,45 @@ Nothing else is changed: there's no hook, and Claude Code's settings aren't touc
 project gets a `temp/draft/` folder while a draft is open, and `draft start` adds `temp/` to
 the project's `.gitignore` if it isn't there.
 
+## Where a draft is made
+
+`draft start` makes the draft in one of two places:
+
+- **In a worktree** (`--worktree`): a scratch copy of your checkout, uncommitted changes
+  included. Your checkout stays as it is until you accept. The copy has no build folder, so
+  the draft can't be built or tested before then.
+- **In place** (`--in-place`): in your checkout. You see the draft in your IDE as ordinary
+  uncommitted edits, and can build and test it while you review it on the page. Accepting
+  then only closes the draft, since the change is already there. Dropping puts every file
+  back as it was when the draft started.
+
+Run with neither flag, `draft start` starts nothing. It prints the checkout's uncommitted
+changes and the question for Claude to ask you, and Claude runs it again with your answer.
+The question recommends in place when the checkout is clean, since the IDE's uncommitted
+diff is then exactly the draft. It recommends the worktree when you have uncommitted changes,
+since in place they would sit mixed with the draft's in the IDE (the page still shows the two
+apart). Say which you want in your request ("draft this in place") and there's no question.
+
+What differs for a draft in place:
+
+- **Anything edited in the checkout while it is open is part of the draft,** whoever edits
+  it. "Your uncommitted change" on the page is fixed at what you had when the draft started.
+- **Dropping it also takes out edits you made meanwhile.** So `draft drop` first writes the
+  whole change it removes to `temp/draft/<name>.dropped.patch`, which `git apply` puts back.
+- **A build can catch Claude part-way through an edit.** The page says when Claude is working.
+- **It needs the checkout to itself.** No other draft can be open beside it, so comparing two
+  ways to make a change takes two worktree drafts.
+- Your staged files are left alone. The draft is diffed through a git index of its own
+  (`temp/draft/<name>/index`), and the snapshot it starts from is kept by the ref
+  `refs/draft/<name>`. Both go when the draft is accepted or dropped.
+
 ## What you see
 
 `draft show` opens a page in the browser, served on localhost.
 
 The page is where the draft is explained. When it opens, `draft show` gives Claude one line to
-say in the chat: that the page is open, its headline, and that nothing in the checkout has
-changed. Claude doesn't retell the draft there, so there is one account of it to read. The
+say in the chat: that the page is open, its headline, and whether the checkout has changed
+(not for a worktree draft; for one in place, that the draft is there to build and test). Claude doesn't retell the draft there, so there is one account of it to read. The
 chat is for what the page can't show, such as a build Claude ran.
 
 - **Diagram, on the left.** The draft's classes and members are coloured: green added, red
@@ -62,8 +94,9 @@ chat is for what the page can't show, such as a build Claude ran.
   it, and "full screen" fills the window with it (Esc closes). It starts fitted to the panel's
   width, but never below 50% so the text stays readable, and keeps its zoom and position
   when the page redraws.
-- **Side panel, on the right.** Tabs for the drafted change (the worktree against where the
-  draft started), your uncommitted change (the checkout against HEAD), and the code of
+- **Side panel, on the right.** Tabs for the drafted change (the draft against where it
+  started), your uncommitted change (the checkout against HEAD; for a draft in place, as it
+  was when the draft started), and the code of
   whatever you clicked. Clicking a class or member jumps to its first changed line. Diffs show
   8 lines around each change, and "whole functions" shows the whole function instead. A file
   with a long diff starts folded (over 600 lines, or over 150 when the whole diff is over 3000).
@@ -124,12 +157,12 @@ chat is for what the page can't show, such as a build Claude ran.
   doesn't mistake an accept in progress for a draft that was dropped.
 
 The page polls the server and redraws whenever the draft, your diff, the scope or Claude's
-reading changes. As Claude edits the worktree, the page follows.
+reading changes. As Claude edits the draft, the page follows.
 
 The server stops itself an hour after the last open page goes away, and an open page then
 says so. Run `draft show` to start it again. The draft itself stays until it's accepted or
-dropped. It costs only disk: a worktree without a build folder. `draft list` shows each draft's
-age and whether its server is running.
+dropped. A worktree draft costs only disk: a worktree without a build folder. `draft list`
+shows each draft's age, whether it is in place, and whether its server is running.
 
 ## Scope: what the diagram includes
 
@@ -152,9 +185,10 @@ age and whether its server is running.
 ## How it works
 
 ```
- Draft (draft_tree.py)       worktree temp/draft/<name>/tree on branch draft/<name>:
-                              HEAD + a "snapshot" commit of your uncommitted changes,
-                              then Claude's edits on top
+ Draft (draft_tree.py)       HEAD + a "snapshot" commit of your uncommitted changes, then
+                              Claude's edits on top. Worktree: temp/draft/<name>/tree on
+                              branch draft/<name>. In place: your checkout, with the
+                              snapshot kept by refs/draft/<name>
         │ three states as file overrides: HEAD, working tree, draft
         ▼
  ApiModel (api_model.py)     Apple's libclang parses each unit with the project's
@@ -194,13 +228,15 @@ Parsing details that matter:
   built.
 - Classes that use a scope class are found only in units already parsed for the scope. A
   user elsewhere in the project can be missing from the ghosts.
-- The worktree isn't configured for building. Build after accepting.
+- A draft's worktree isn't configured for building. Build after accepting, or make the
+  draft in place.
 - Templates appear under their template name. Free functions and enums aren't drawn.
 - C++ only. Other files show in the diffs but not the diagram.
-- `accept` uses `git apply`. If the checkout has changed in the same lines since the draft
-  started, accept refuses and says why. Rebase by dropping and starting again.
-- One repository per draft. `git worktree add` doesn't check out submodules, so in a draft
-  of the parent repo the submodules' folders are empty: a draft can't change files inside a
+- Accepting a worktree draft uses `git apply`. If the checkout has changed in the same lines
+  since the draft started, accept refuses and says why. Rebase by dropping and starting again.
+- One repository per draft. In place, a change inside a submodule shows only as a moved
+  submodule pointer, not as a diff. `git worktree add` doesn't check out submodules, so in a
+  worktree draft of the parent repo the submodules' folders are empty: a draft can't change files inside a
   submodule, and your uncommitted work inside one isn't copied into the draft. Classes in a
   submodule still appear in the diagram, read from your checkout. A change to a submodule
   needs its own draft, started from the submodule's folder; there the diagram is likely
@@ -213,8 +249,8 @@ Ideas not yet built, with their reasoning, are in `future-ideas.md`.
 
 ## Open: leftover drafts
 
-A draft's server stops by itself, but its worktree and `draft/<name>` branch stay until
-someone accepts or drops it, so forgotten drafts pile up. The likely fix is a `SessionStart`
+A draft's server stops by itself, but the draft (its worktree and `draft/<name>` branch, or
+for one in place its hold on the checkout) stays until someone accepts or drops it, so forgotten drafts pile up. The likely fix is a `SessionStart`
 hook that runs `draft list` for the session's project. Text a SessionStart hook prints goes
 into Claude's context, so Claude would open with "this project has 2 drafts, the oldest 9 days
 old: keep or drop?" That keeps clear-up a question for the user, never an automatic delete.
@@ -226,11 +262,15 @@ the session being resumed should be mentioned.
 In a CMake project, after reading a class in a Claude session:
 
 ```
-draft start demo && (edit a method body and add a member in the printed worktree)
+draft start demo --worktree && (edit a method body and add a member in the printed worktree)
 draft scope demo      # lists the class under "Changed by the draft", with both edits
 draft show demo       # amber method, green member; clicking them jumps to the diff
 draft drop demo
 ```
+
+The same with `--in-place`, editing the checkout: `draft scope` and the page show the same,
+and after `draft drop demo`, `git status` is as it was before `draft start`. `draft start
+demo` with neither flag prints the question and exits with status 2.
 ## Licence
 
 MIT, copyright UrsaDSP / Perambulum Ltd. See `LICENSE`.

@@ -72,7 +72,7 @@ class DraftView:
         self.drafted = Patch(p.draft_patch(context=DIFF_CONTEXT))
         self.current_whole = Patch(p.current_patch(DIFF_CONTEXT, whole=True))
         self.drafted_whole = Patch(p.draft_patch(context=DIFF_CONTEXT, whole=True))
-        head_state, prop_state = p.state_files()
+        head_state, work_state, prop_state = p.state_files()
         project = self.project_files() | {f for f in prop_state if f.endswith(CPP_EXTS)}
 
         reads = ReadLog(p.meta["session"]).load()
@@ -91,7 +91,7 @@ class DraftView:
             return ApiModel.merge(project, parts, absent)
 
         self.head = model(head_state)
-        self.work = model({})
+        self.work = model(work_state)
         self.prop = model(prop_state)
         self.current_diff = ApiDiff(self.head, self.work, self.current.ranges(self.root, "old"),
                                     self.current.ranges(self.root, "new"))

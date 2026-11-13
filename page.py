@@ -520,7 +520,7 @@ class DraftPage:
 
     def html(self):
         v = self.v
-        _, prop_state = v.p.state_files()
+        _, _, prop_state = v.p.state_files()
         self.prop_texts = {f: t for f, t in prop_state.items() if t is not None}
         dot = self.dot()
         meta = v.p.meta
@@ -548,6 +548,7 @@ class DraftPage:
             commit_files=json.dumps([c.get("files", []) for c in self._commits()]),
             mermaid='<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>' if sequence else "",
             name=esc(meta["name"]), headline=esc(meta.get("summary") or ""),
+            place=IN_PLACE_NOTE if v.p.in_place else "",
             summary=items(summary), current=items(current), warn=warn,
             offstage=f"<div class='off'>Your uncommitted change also touches: {offstage}</div>" if offstage else "",
             prop_diff=self.prop_panel.html(), cur_diff=self.cur_panel.html(),
@@ -558,6 +559,10 @@ class DraftPage:
                        f"{len(v.changed_classes)} changed by the draft, {len(v.expanded)} added by you. "
                        f"{len(v.ghosts)} ghosts{more}.")
 
+
+IN_PLACE_NOTE = ('<div class="off"><b>Made in place:</b> this draft is in your checkout now, so you can see it in '
+                 'your IDE, and build and test it. Anything you edit there while the draft is open becomes '
+                 'part of it. "Your uncommitted change" is what you had when the draft started.</div>')
 
 PAGE = """<!DOCTYPE html>
 <html><head><meta charset="utf-8"><title>Draft: {name}</title>
@@ -658,6 +663,7 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
  <div class="legend"><span style="background:{p.ADDED}">draft adds</span><span style="background:{p.CHANGED}">changes</span><span style="background:{p.REMOVED}"><s>removes</s></span><span style="background:{p.CURRENT}">your uncommitted change</span><span style="color:{p.UNREAD_TEXT}">not read by Claude</span><span style="border-style:dashed;color:{p.DIM}">ghost: click to add</span>{key}</div>
  <div class="cols"><div><b>API changes in the draft</b><ul>{summary}</ul></div><div><b>Your uncommitted API changes</b><ul>{current}</ul></div></div>
  <div style="color:{p.DIM}">{scope_note}</div>
+ {place}
  {warn}{offstage}{diags}
 </header>
 <main>

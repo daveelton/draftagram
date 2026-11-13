@@ -5,14 +5,17 @@
 # ///
 """draft: see a change Claude drafts as a class diagram and code diffs before it lands.
 
-    draft start NAME [--summary TEXT]   worktree for the draft, from your checkout as it is
+    draft start NAME --worktree | --in-place [--summary TEXT]
+                                        start a draft from your checkout as it is: in a scratch
+                                        worktree, or in the checkout itself so you can build
+                                        and test it. With neither, it says what to ask the user
     draft show [NAME]                   open the live page (diagram + diffs) in the browser
     draft scope [NAME]                  what's in the diagram, as text (for Claude)
     draft notes [NAME] --file FILE      Claude's notes for the page (--format: what they hold)
     draft answers [NAME] [--wait]       the user's Fix/Leave answers sent from the page
     draft render [NAME] [--out FILE]    write the page once, without the live server
-    draft accept [NAME]                 apply the draft to your checkout, uncommitted
-    draft drop [NAME]                   throw the draft away
+    draft accept [NAME]                 keep the draft in your checkout, uncommitted
+    draft drop [NAME]                   throw the draft away (in place: put the checkout back)
     draft list
 
 Docs: README.md beside this script (`cat "$(which draft)"` shows where that is).
@@ -34,7 +37,7 @@ sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 from notes import FORMAT, Notes   # noqa: E402
 from page import DraftPage      # noqa: E402
 from patch import Patch         # noqa: E402
-from draft_tree import Draft      # noqa: E402
+from draft_tree import Draft, IN_PLACE, WORKTREE   # noqa: E402
 from view import DraftView, UnitCache   # noqa: E402
 
 # An open page polls every 2 seconds, about once a minute when Chrome throttles a background
@@ -311,6 +314,9 @@ class DraftCli:
         s.add_argument("name")
         s.add_argument("--summary", default="")
         s.add_argument("--session", default=os.environ.get("CLAUDE_CODE_SESSION_ID"))
+        where = s.add_mutually_exclusive_group()
+        where.add_argument("--worktree", dest="mode", action="store_const", const=WORKTREE)
+        where.add_argument("--in-place", dest="mode", action="store_const", const=IN_PLACE)
         for cmd in ("show", "scope", "accept", "drop", "serve"):
             sub.add_parser(cmd).add_argument("name", nargs="?")
         n = sub.add_parser("notes")
@@ -331,9 +337,63 @@ class DraftCli:
         if not a.session:
             raise SystemExit("no session id: run inside Claude Code, or pass --session")
         p = Draft(self.root, a.name)
-        p.start(a.session, a.summary)
-        print(f"Draft '{p.name}' started. Make the change in:\n  {p.tree}\n"
-              f"Then: draft show {p.name}")
+        if not a.mode:
+            print(self._ask_where(p))
+            sys.exit(2)
+        p.start(a.session, a.mode, a.summary)
+        if p.in_place:
+            print(f"Draft '{p.name}' started in place. Make the change in the checkout itself:\n"
+                  f"  {p.tree}\nThen: draft show {p.name}")
+        else:
+            print(f"Draft '{p.name}' started. Make the change in its worktree:\n  {p.tree}\n"
+                  f"Then: draft show {p.name}")
+
+    MAX_FILES_LISTED = 12
+
+    def _ask_where(self, p):
+        """What `draft start` says when it wasn't told where to make the draft: the question
+        Claude is to put to the user, with the recommendation the checkout's state leads to."""
+        if p.exists():
+            raise SystemExit(f"draft '{p.name}' already exists: {p.tree}")
+        blocked = p.in_the_way(None)
+        if blocked:
+            raise SystemExit(blocked)
+        again = f"draft start {p.name} --worktree"
+        if Draft.all(self.root):
+            return ("Not started. Other drafts are open here, so this one can only be made in a "
+                    f"worktree. There's nothing to ask the user: run `{again}`.")
+        changes = Draft.checkout_changes(self.root)
+        worktree = ('"In a separate worktree"  ->  --worktree\n'
+                    "     The draft is made in a scratch copy and their source tree stays as it is "
+                    "until they accept it. It can't be built or tested before then.")
+        in_place = ('"In my source tree"  ->  --in-place\n'
+                    "     The draft is made in their source tree, so they can see it in the IDE, and "
+                    "build and test it, while they review it. Dropping it puts every file back as it "
+                    "is now. Anything they edit while it's open becomes part of the draft.")
+        if changes:
+            n = len(changes)
+            listed = "".join(f"\n  {status} {path}" for status, path in changes[:self.MAX_FILES_LISTED])
+            more = f"\n  ... and {n - self.MAX_FILES_LISTED} more" if n > self.MAX_FILES_LISTED else ""
+            state = (f"The source tree has uncommitted changes in {n} file{'s' if n > 1 else ''}:"
+                     f"{listed}{more}\n"
+                     "Say so in the question: how many files, and their names (the first few if "
+                     "there are many).")
+            first, second = worktree, in_place
+            why = ("Recommended because their own uncommitted changes and the draft's would sit "
+                   "mixed together in the IDE's diff if it were made in place. The draft's page "
+                   "still shows the two apart.")
+        else:
+            state = "The source tree has no uncommitted changes. Say so in the question."
+            first, second = in_place, worktree
+            why = ("Recommended because the IDE's uncommitted diff is then exactly the draft, and "
+                   "dropping it just returns the source tree to the last commit.")
+        return ("Not started: the user hasn't said where to make this draft. Ask them with "
+                "AskUserQuestion, then run `draft start` again with the flag for their answer "
+                "(and the same name and summary).\n\n"
+                f"{state}\n\n"
+                "The two options, the recommended one first with \"(Recommended)\" after its label:\n"
+                f"  1. {first}\n     {why}\n"
+                f"  2. {second}")
 
     def cmd_show(self, a):
         p = Draft.find(self.root, a.name)
@@ -433,7 +493,8 @@ class DraftCli:
             time.sleep(WAIT_POLL_SECONDS)
         print("The user's answers to your checks:")
         self._print_answers(sent)
-        print("Make the fixes in the worktree, then update the notes: a new set of checks if any, and "
+        where = "the checkout, where this draft is" if p.in_place else "the worktree"
+        print(f"Make the fixes in {where}, then update the notes: a new set of checks if any, and "
               "sinceLastReview saying what you changed for each fix. Don't raise the left ones again.")
         if any(s["decision"] == "leave" and s.get("note") for s in sent):
             print("A note on a check the user left is a request: the draft stays as it is on that "
@@ -488,16 +549,23 @@ class DraftCli:
     def cmd_accept(self, a):
         p = Draft.find(self.root, a.name)
         DraftServer.stop(p)
+        in_place = p.in_place
         files = p.accept()
-        print(f"Applied '{p.name}' to {self.root} (uncommitted):")
+        print(f"Accepted '{p.name}': it was made in place, so it is already in {self.root} (uncommitted):"
+              if in_place else f"Applied '{p.name}' to {self.root} (uncommitted):")
         for f in files:
             print("  " + f)
 
     def cmd_drop(self, a):
         p = Draft.find(self.root, a.name)
         DraftServer.stop(p)
-        p.drop()
-        print(f"Dropped '{p.name}'.")
+        in_place = p.exists() and p.in_place
+        kept = p.drop()
+        print(f"Dropped '{p.name}'." + (" The checkout is back as it was when the draft started."
+                                        if in_place else ""))
+        if kept:
+            print(f"The change taken out is kept in {kept}\n"
+                  f"(`git apply` on it puts it back), until a draft of the same name starts.")
 
     @staticmethod
     def _server_state(live):
@@ -516,7 +584,8 @@ class DraftCli:
             days = (time.time() - m.get("started", time.time())) / 86400
             age = f"{days:.0f} days old" if days >= 1 else "started today"
             state = self._server_state(live)
-            print(f"{p.name}  {m.get('summary', '')}  ({age}, {state})")
+            place = "in place, " if p.in_place else ""
+            print(f"{p.name}  {m.get('summary', '')}  ({place}{age}, {state})")
         if not drafts:
             print("no drafts")
 
