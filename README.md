@@ -25,8 +25,12 @@ the diff and navigate the code:
 The diagram is drawn from the code each time, never kept as a separate model. So what you
 review is the code Claude actually wrote, not Claude's description of it.
 
-For macOS, Claude Code and C++ projects built with CMake. Run from Claude with the `/draft`
-skill (`skill/SKILL.md`), or by hand with `draft --help`.
+**Today it is for C++ projects built with CMake, on macOS, with Claude Code.** Nothing about
+the idea is tied to those. The diagram comes from one parser (`ApiModel`, which uses Apple's
+libclang), and the draft, the diffs and the page don't depend on the language, so the same
+could be made for other languages and platforms.
+
+Run from Claude with the `/draft` skill (`skill/SKILL.md`), or by hand with `draft --help`.
 
 ## Install
 
