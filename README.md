@@ -125,7 +125,7 @@ chat is for what the page can't show, such as a build Claude ran.
   whatever you clicked. Clicking a class or member jumps to its first changed line. Diffs show
   8 lines around each change, and "whole functions" shows the whole function instead. A file
   with a long diff starts folded (over 600 lines, or over 150 when the whole diff is over 3000).
-- **Header.** A text summary of the API changes in each diff, and how the scope was chosen.
+- **Header.** A text summary of the API changes in each diff, and how the scope was chosen. Each summary folds away to give the diagram its height, and a long one starts folded.
 - **Claude's notes**, in violet wherever they appear, since they are Claude's words and not
   read from the code. The Overview tab opens with the problem the draft fixes (or what it
   adds) in a sentence or two, then the bullets saying how the draft does it, a before/after

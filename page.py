@@ -40,6 +40,8 @@ SHOW_ALL_UP_TO = 8
 FOLD_FILE_ROWS = 600
 BIG_CHANGE_ROWS = 3000
 FOLD_IN_BIG_CHANGE_ROWS = 150
+# A header list of API changes with more lines than this starts folded, so the diagram keeps its height.
+FOLD_API_LINES = 8
 # Members are grouped under C++ access headings rather than marked with UML's + and -,
 # which beside the green and red fills read as added and removed.
 ACCESS_HEADINGS = [(mark, word) for word, mark in ACCESS.items()] + [(" ", None)]
@@ -549,7 +551,9 @@ class DraftPage:
             mermaid='<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>' if sequence else "",
             name=esc(meta["name"]), headline=esc(meta.get("summary") or ""),
             place=IN_PLACE_NOTE if v.p.in_place else "",
-            summary=items(summary), current=items(current), warn=warn,
+            summary=items(summary), current=items(current), summary_n=len(summary), current_n=len(current), warn=warn,
+            summary_open="" if len(summary) > FOLD_API_LINES else " open",
+            current_open="" if len(current) > FOLD_API_LINES else " open",
             offstage=f"<div class='off'>Your uncommitted change also touches: {offstage}</div>" if offstage else "",
             prop_diff=self.prop_panel.html(), cur_diff=self.cur_panel.html(),
             prop_whole=self.prop_whole.html(), cur_whole=self.cur_whole.html(),
@@ -573,6 +577,7 @@ header {{ padding:8px 14px; border-bottom:1px solid {p.BORDER}; background:{p.PA
 header h1 {{ font-size:15px; margin:0 0 2px; }}
 header h1 .branch {{ float:right; font:12px Menlo, monospace; color:{p.TEXT}; border:1px solid {p.BORDER}; background:{p.RAISED}; padding:2px 8px; border-radius:3px; }}
 header .cols {{ display:flex; gap:28px; }}
+details.api > summary {{ cursor:pointer; }}
 header ul {{ margin:2px 0; padding-left:18px; font-family:Menlo, monospace; font-size:11.5px; }}
 .legend span {{ display:inline-block; padding:1px 6px; margin-right:4px; border:1px solid {p.BORDER}; font-size:11px; }}
 .warn {{ background:{p.WARN_BG}; border:1px solid {p.UNREAD}; padding:4px 8px; margin-top:4px; }}
@@ -662,11 +667,23 @@ details.minor {{ margin-top:8px; color:{p.DIM}; }} details.minor ul {{ color:{p.
 <header>
  <h1>Draft: {name} <span style="font-weight:normal">{headline}</span><span class="branch" title="Accepting commits to this branch and pushes to its upstream">{branch}</span></h1>
  <div class="legend"><span style="background:{p.ADDED}">draft adds</span><span style="background:{p.CHANGED}">changes</span><span style="background:{p.REMOVED}"><s>removes</s></span><span style="background:{p.CURRENT}">your uncommitted change</span><span style="color:{p.UNREAD_TEXT}">not read by Claude</span><span style="border-style:dashed;color:{p.DIM}">ghost: click to add</span>{key}</div>
- <div class="cols"><div><b>API changes in the draft</b><ul>{summary}</ul></div><div><b>Your uncommitted API changes</b><ul>{current}</ul></div></div>
+ <div class="cols"><details class="api" id="api-draft"{summary_open}><summary><b>API changes in the draft</b> ({summary_n})</summary><ul>{summary}</ul></details><details class="api" id="api-current"{current_open}><summary><b>Your uncommitted API changes</b> ({current_n})</summary><ul>{current}</ul></details></div>
  <div style="color:{p.DIM}">{scope_note}</div>
  {place}
  {warn}{offstage}{diags}
 </header>
+<script>
+// The API lists can be folded away to give the diagram the height, and a long one starts
+// folded. The user's choice is kept across the reloads the draft's changes cause, and set here,
+// before the page first paints, so a reload doesn't flash the list open or shut.
+document.querySelectorAll('details.api').forEach(d => {{
+  try {{ const chosen = localStorage.getItem(d.id); if (chosen) d.open = chosen === 'open'; }} catch (e) {{}}
+  d.addEventListener('toggle', () => {{
+    try {{ localStorage.setItem(d.id, d.open ? 'open' : 'closed'); }} catch (e) {{}}
+    window.dispatchEvent(new Event('resize'));     // the panels below gain or lose the height
+  }});
+}});
+</script>
 <main>
  <div id="diagram"><div id="zoom"><button onclick="zoomBy(1 / ZOOM_STEP)" title="Zoom out">−</button><span id="zoomed"></span><button onclick="zoomBy(ZOOM_STEP)" title="Zoom in">+</button><button onclick="zoomFit()">fit</button><button onclick="zoomTo(1)">100%</button><button id="full" onclick="setFull(!diagram.classList.contains('full'))">full screen</button><span class="hint">pinch or ⌘-scroll to zoom, drag to move</span></div><div id="svg">Drawing…</div></div>
  <div id="side">
