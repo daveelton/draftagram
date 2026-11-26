@@ -26,6 +26,7 @@ class Palette:
     GHOST_FILL, GHOST_LINE = "#25272b", "#6b7079"
     EDGE_ADDED, EDGE_REMOVED = "#3fbf5f", "#e05555"
     DIFF_ADD, DIFF_DEL, HUNK_BG, HUNK_TEXT = "#1d3a26", "#432326", "#23293a", "#7f9cd6"
+    GUTTER_ADDED, GUTTER_CHANGED, GUTTER_REMOVED = "#3fbf5f", "#4a88e8", "#e05555"   # the Code tab's change bars
     WARN_BG = "#3d2f17"
     NOTE, NOTE_BG = "#a594f9", "#2a2640"
     PROCESSES = ["#3fb8af", "#e06c9f", "#c8a165", "#8fa3b8", "#b5b35c"]
@@ -35,6 +36,7 @@ P = Palette
 DRAFT_FILL = {ADDED: P.ADDED, REMOVED: P.REMOVED, CHANGED: P.CHANGED}
 CURRENT_FILL = P.CURRENT
 SHOW_ALL_UP_TO = 8
+CODE_MAX_LINES = 80     # of one span in the Code tab
 # A file whose diff is longer than this starts folded, and so does any file over
 # FOLD_IN_BIG_CHANGE_ROWS when the whole diff is over BIG_CHANGE_ROWS.
 FOLD_FILE_ROWS = 600
@@ -224,8 +226,19 @@ class DraftPage:
                 text = open(path, errors="replace").read()
             except OSError:
                 return ""
-        lines = text.splitlines()[first - 1:min(last, first + 79)]
+        lines = text.splitlines()[first - 1:min(last, first + CODE_MAX_LINES - 1)]
         return "\n".join(lines)
+
+    def _code(self, path, first, last, marked):
+        """One span for the Code tab: its text, its first line's number, and `marks` as
+        {offset into the text: gutter mark}. Lines removed just above the span's first
+        line aren't marked: they were outside it."""
+        text = self._source(path, first, last)
+        marks = self.v.gutter_marks(path) if marked else {}
+        count = len(text.splitlines())
+        return {"where": f"{os.path.relpath(path, self.v.root)}:{first}", "first": first, "text": text,
+                "marks": {n - first: mark for n, mark in marks.items()
+                          if first <= n < first + count and not (n == first and mark == REMOVED)}}
 
     def _spans(self, cls_name, key=None):
         """Declaration and body spans of a class or member, in the draft and the working
@@ -248,8 +261,8 @@ class DraftPage:
         status = pd.member_status(cls_name, key) if key else pd.class_status(cls_name)
         cur = self.v.current_diff
         cstatus = cur.member_status(cls_name, key) if key else cur.class_status(cls_name)
-        code = [{"where": f"{os.path.relpath(f, self.v.root)}:{a}", "text": self._source(f, a, b)}
-                for f, a, b in (spans["new"] or spans["old"])]
+        # Only the draft's own lines are marked: a class the draft removes is shown as it was.
+        code = [self._code(f, a, b, marked=bool(spans["new"])) for f, a, b in (spans["new"] or spans["old"])]
         return {"title": title, "status": status, "current": cstatus, "code": code,
                 "prop": self.prop_panel.anchor(self.v.root, spans["new"], spans["old"]) if status else None,
                 "cur": self.cur_panel.anchor(self.v.root, spans["old"], []) if cstatus else None}
@@ -608,6 +621,13 @@ td.src {{ white-space:pre; }}
 tr.add {{ background:{p.DIFF_ADD}; }} tr.del {{ background:{p.DIFF_DEL}; }} tr.hunk td {{ color:{p.HUNK_TEXT}; background:{p.HUNK_BG}; }}
 tr.hit {{ outline:2px solid {p.LINK}; }}
 pre {{ font:11.5px Menlo, monospace; background:{p.PANEL}; padding:6px; overflow:auto; }}
+table.code {{ background:{p.PANEL}; margin-bottom:10px; }}
+td.gut {{ width:3px; min-width:3px; padding:0; }} table.code td.src {{ padding-left:8px; }}
+td.gut.added {{ background:{p.GUTTER_ADDED}; }} td.gut.changed {{ background:{p.GUTTER_CHANGED}; }}
+td.gut.removed {{ position:relative; }}      /* a tab between two lines: where the removed lines were */
+td.gut.removed::before {{ content:""; position:absolute; left:0; top:-2px; width:9px; height:4px; border-radius:0 2px 2px 0; background:{p.GUTTER_REMOVED}; }}
+.gutter-key {{ color:{p.DIM}; font-size:12px; }} .gutter-key span {{ margin-left:10px; padding-left:6px; border-left:3px solid; }}
+.gutter-key .added {{ border-color:{p.GUTTER_ADDED}; }} .gutter-key .changed {{ border-color:{p.GUTTER_CHANGED}; }} .gutter-key .removed {{ border-color:{p.GUTTER_REMOVED}; }}
 .empty {{ color:{p.FAINT}; }}
 .legend .sep {{ border:none; color:{p.DIM}; padding-left:10px; }}
 .legend .notes-key {{ color:{p.NOTE}; border-color:{p.NOTE}; background:{p.NOTE_BG}; }}
@@ -822,6 +842,8 @@ function jump(id, t) {{
   row.classList.add('hit');
   row.scrollIntoView({{block:'center'}});
 }}
+const GUTTER_KEY = '<p class="gutter-key">Since the last commit: <span class="added">added</span>' +
+  '<span class="changed">changed</span><span class="removed">lines removed above</span></p>';
 function select(sid) {{
   const s = SEL[sid];
   let h = '<h3 style="font:600 13px Menlo">' + esc(s.title) + '</h3>';
@@ -829,7 +851,15 @@ function select(sid) {{
        (s.current ? ' · your uncommitted change: <b>' + s.current + '</b>' : '') + '</p>';
   if (s.prop) h += '<p><a href="#" onclick="jump(\\'' + s.prop + '\\',\\'prop\\');return false">Show in the draft</a></p>';
   if (s.cur) h += '<p><a href="#" onclick="jump(\\'' + s.cur + '\\',\\'cur\\');return false">Show in your uncommitted change</a></p>';
-  for (const c of s.code) h += '<div class="fname">' + esc(c.where) + '</div><pre>' + esc(c.text) + '</pre>';
+  if (s.code.some(c => Object.keys(c.marks).length)) h += GUTTER_KEY;
+  for (const c of s.code) {{
+    h += '<div class="fname">' + esc(c.where) + '</div><table class="code">';
+    c.text.split('\\n').forEach((line, i) => {{
+      h += '<tr><td class="ln">' + (c.first + i) + '</td><td class="gut ' + (c.marks[i] || '') + '"></td>' +
+           '<td class="src">' + esc(line) + '</td></tr>';
+    }});
+    h += '</table>';
+  }}
   document.getElementById('code').innerHTML = h;
   if (s.prop) jump(s.prop, 'prop'); else if (s.cur) jump(s.cur, 'cur'); else tab('code');
 }}

@@ -361,6 +361,12 @@ class Draft:
                 out += r.stdout
         return out
 
+    def commit_patch(self, context=3):
+        """What a commit of the draft's files would hold: the diff from the last commit to the
+        draft's tree, the user's own uncommitted changes and the draft's together."""
+        self._tree_git("add", "-A")
+        return self._tree_git("diff", "--cached", f"-U{context}", self.meta["head"])
+
     def state_files(self):
         """Overrides for the three states (HEAD, the user's own changes, the draft), each as
         {path in the checkout: text, or None if the file doesn't exist in that state}. A file

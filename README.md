@@ -122,7 +122,11 @@ chat is for what the page can't show, such as a build Claude ran.
 - **Side panel, on the right.** Tabs for the drafted change (the draft against where it
   started), your uncommitted change (the checkout against HEAD; for a draft in place, as it
   was when the draft started), and the code of
-  whatever you clicked. Clicking a class or member jumps to its first changed line. Diffs show
+  whatever you clicked. The code has line numbers and, like an IDE's gutter, a bar beside each
+  line that differs from the last commit: green for added, blue for changed, and a red tab
+  where lines were removed. That is what a commit of the file would hold, so your own
+  uncommitted changes are marked along with the draft's. Clicking a class or member jumps to
+  its first changed line. Diffs show
   8 lines around each change, and "whole functions" shows the whole function instead. A file
   with a long diff starts folded (over 600 lines, or over 150 when the whole diff is over 3000).
 - **Header.** A text summary of the API changes in each diff, and how the scope was chosen. Each summary folds away to give the diagram its height, and a long one starts folded.

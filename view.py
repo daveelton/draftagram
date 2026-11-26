@@ -72,6 +72,7 @@ class DraftView:
         self.drafted = Patch(p.draft_patch(context=DIFF_CONTEXT))
         self.current_whole = Patch(p.current_patch(DIFF_CONTEXT, whole=True))
         self.drafted_whole = Patch(p.draft_patch(context=DIFF_CONTEXT, whole=True))
+        self.committed = Patch(p.commit_patch())
         head_state, work_state, prop_state = p.state_files()
         project = self.project_files() | {f for f in prop_state if f.endswith(CPP_EXTS)}
 
@@ -100,6 +101,15 @@ class DraftView:
         self.diagnostics = sorted(set(self.prop.diagnostics + self.work.diagnostics))
         self._choose_scope()
         return self
+
+    def gutter_marks(self, path):
+        """{line: mark} for a file as the draft has it, against the last commit. A worktree
+        draft shows the files it leaves alone from the checkout, which the user may have
+        edited since the draft started, so those are marked from their diff as it is now."""
+        rel = os.path.relpath(path, self.root)
+        drafted = any(f.path == rel for f in self.drafted.files)
+        patch = self.committed if drafted or self.p.in_place else self.current
+        return next((f.gutter_marks() for f in patch.files if f.new_path == rel), {})
 
     # ---------- scope ----------
 

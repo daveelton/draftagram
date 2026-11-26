@@ -2,6 +2,8 @@
 import os
 import re
 
+from api_diff import ADDED, CHANGED, REMOVED
+
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$")
 
 
@@ -22,6 +24,26 @@ class FilePatch:
         kind_for = "-" if side == "old" else "+"
         return [((o, o) if side == "old" else (n, n))
                 for _, rows in self.hunks for kind, o, n, _ in rows if kind == kind_for]
+
+    def gutter_marks(self):
+        """{new line: mark}, as an IDE's gutter marks a file against its last commit:
+        ADDED for a line put in, CHANGED for one that replaces removed lines, and REMOVED
+        for the line that lines were taken out just above."""
+        marks = {}
+        for _, rows in self.hunks:
+            run = []                    # the changed rows between two unchanged ones
+            for row in rows + [(" ", 0, 0, "")]:
+                if row[0] != " ":
+                    run.append(row)
+                    continue
+                added = [n for kind, _, n, _ in run if kind == "+"]
+                if added:
+                    mark = CHANGED if len(added) < len(run) else ADDED
+                    marks.update((n, mark) for n in added)
+                elif run:
+                    marks[run[0][2]] = REMOVED
+                run = []
+        return marks
 
 
 class Patch:
