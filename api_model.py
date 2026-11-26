@@ -312,6 +312,8 @@ class ApiModel:
             return
         access = ACCESS.get(c.access_specifier.name.lower(), " ")
         ext = c.extent
+        if ext.start.file is None:  # a member with no source of its own, as _from_macro allows
+            return
         f = os.path.normpath(ext.start.file.name)
         if c.kind in (K.FIELD_DECL, K.VAR_DECL):
             static = "static " if c.kind == K.VAR_DECL else ""
